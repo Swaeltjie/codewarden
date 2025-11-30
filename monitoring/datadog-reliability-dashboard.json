@@ -1,0 +1,456 @@
+{
+  "title": "CodeWarden - Reliability & Performance (v2.2.0)",
+  "description": "Monitors reliability features: circuit breakers, response cache, idempotency, and performance metrics",
+  "widgets": [
+    {
+      "id": 1,
+      "definition": {
+        "title": "Circuit Breaker Status",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "sum:codewarden.circuit_breaker.open{*}",
+            "aggregator": "last"
+          }
+        ],
+        "custom_unit": "services",
+        "precision": 0
+      },
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 2,
+      "definition": {
+        "title": "Circuit Breaker States Over Time",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:codewarden.circuit_breaker.open{*} by {service_name}",
+            "display_type": "line",
+            "style": {
+              "palette": "warm",
+              "line_type": "solid",
+              "line_width": "normal"
+            }
+          },
+          {
+            "q": "sum:codewarden.circuit_breaker.half_open{*} by {service_name}",
+            "display_type": "line",
+            "style": {
+              "palette": "orange",
+              "line_type": "dashed"
+            }
+          }
+        ],
+        "yaxis": {
+          "label": "",
+          "scale": "linear",
+          "min": "auto",
+          "max": "auto",
+          "include_zero": true
+        }
+      },
+      "layout": {
+        "x": 2,
+        "y": 0,
+        "width": 6,
+        "height": 2
+      }
+    },
+    {
+      "id": 3,
+      "definition": {
+        "title": "Cache Hit Rate",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "avg:codewarden.cache.hit_rate{*}",
+            "aggregator": "avg"
+          }
+        ],
+        "custom_unit": "%",
+        "precision": 1,
+        "autoscale": false
+      },
+      "layout": {
+        "x": 8,
+        "y": 0,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 4,
+      "definition": {
+        "title": "Cost Savings from Cache",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "sum:codewarden.cache.cost_saved_usd{*}",
+            "aggregator": "sum"
+          }
+        ],
+        "custom_unit": "$",
+        "precision": 2,
+        "autoscale": false
+      },
+      "layout": {
+        "x": 10,
+        "y": 0,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 5,
+      "definition": {
+        "title": "Cache Hit vs Miss",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:codewarden.cache.hit{*}",
+            "display_type": "bars",
+            "style": {
+              "palette": "green"
+            }
+          },
+          {
+            "q": "sum:codewarden.cache.miss{*}",
+            "display_type": "bars",
+            "style": {
+              "palette": "red"
+            }
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 2,
+        "width": 6,
+        "height": 2
+      }
+    },
+    {
+      "id": 6,
+      "definition": {
+        "title": "Idempotency - Duplicate Requests Blocked",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "sum:codewarden.idempotency.duplicate_blocked{*}.as_count()",
+            "aggregator": "sum"
+          }
+        ],
+        "custom_unit": "requests",
+        "precision": 0
+      },
+      "layout": {
+        "x": 6,
+        "y": 2,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 7,
+      "definition": {
+        "title": "Duplicate Request Rate",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "(sum:codewarden.idempotency.duplicate_blocked{*}.as_count() / sum:codewarden.idempotency.total_requests{*}.as_count()) * 100",
+            "display_type": "line",
+            "style": {
+              "palette": "purple"
+            }
+          }
+        ],
+        "yaxis": {
+          "label": "Duplicate Rate %",
+          "min": "0",
+          "max": "100"
+        }
+      },
+      "layout": {
+        "x": 8,
+        "y": 2,
+        "width": 4,
+        "height": 2
+      }
+    },
+    {
+      "id": 8,
+      "definition": {
+        "title": "PR Review Latency (p50, p95, p99)",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "p50:codewarden.pr_review.duration{*}",
+            "display_type": "line",
+            "style": {
+              "palette": "blue",
+              "line_type": "solid"
+            }
+          },
+          {
+            "q": "p95:codewarden.pr_review.duration{*}",
+            "display_type": "line",
+            "style": {
+              "palette": "orange",
+              "line_type": "dashed"
+            }
+          },
+          {
+            "q": "p99:codewarden.pr_review.duration{*}",
+            "display_type": "line",
+            "style": {
+              "palette": "red",
+              "line_type": "dotted"
+            }
+          }
+        ],
+        "yaxis": {
+          "label": "Seconds",
+          "scale": "linear"
+        }
+      },
+      "layout": {
+        "x": 0,
+        "y": 4,
+        "width": 6,
+        "height": 2
+      }
+    },
+    {
+      "id": 9,
+      "definition": {
+        "title": "OpenAI API Success Rate",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "(sum:codewarden.openai.success{*}.as_count() / sum:codewarden.openai.total{*}.as_count()) * 100",
+            "aggregator": "avg"
+          }
+        ],
+        "custom_unit": "%",
+        "precision": 2,
+        "autoscale": false
+      },
+      "layout": {
+        "x": 6,
+        "y": 4,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 10,
+      "definition": {
+        "title": "Azure DevOps API Success Rate",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "(sum:codewarden.azure_devops.success{*}.as_count() / sum:codewarden.azure_devops.total{*}.as_count()) * 100",
+            "aggregator": "avg"
+          }
+        ],
+        "custom_unit": "%",
+        "precision": 2,
+        "autoscale": false
+      },
+      "layout": {
+        "x": 8,
+        "y": 4,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 11,
+      "definition": {
+        "title": "Daily Cost Trend",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:codewarden.cost.ai_api{*}.rollup(sum, 86400)",
+            "display_type": "bars",
+            "style": {
+              "palette": "green"
+            }
+          },
+          {
+            "q": "sum:codewarden.cache.cost_saved_usd{*}.rollup(sum, 86400)",
+            "display_type": "line",
+            "style": {
+              "palette": "purple",
+              "line_type": "dashed"
+            }
+          }
+        ],
+        "yaxis": {
+          "label": "USD",
+          "scale": "linear"
+        }
+      },
+      "layout": {
+        "x": 10,
+        "y": 4,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 12,
+      "definition": {
+        "title": "Review Throughput",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:codewarden.pr_review.completed{*}.as_count()",
+            "display_type": "bars",
+            "style": {
+              "palette": "cool"
+            }
+          }
+        ],
+        "yaxis": {
+          "label": "Reviews/Hour",
+          "scale": "linear"
+        }
+      },
+      "layout": {
+        "x": 0,
+        "y": 6,
+        "width": 4,
+        "height": 2
+      }
+    },
+    {
+      "id": 13,
+      "definition": {
+        "title": "Issues Found by Severity",
+        "type": "toplist",
+        "requests": [
+          {
+            "q": "top(sum:codewarden.review.issues{*} by {severity}, 10, 'sum', 'desc')"
+          }
+        ]
+      },
+      "layout": {
+        "x": 4,
+        "y": 6,
+        "width": 4,
+        "height": 2
+      }
+    },
+    {
+      "id": 14,
+      "definition": {
+        "title": "Tokens Used per Review",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "avg:codewarden.review.tokens_used{*}",
+            "display_type": "line",
+            "style": {
+              "palette": "dog_classic"
+            }
+          }
+        ],
+        "yaxis": {
+          "label": "Tokens",
+          "scale": "linear"
+        }
+      },
+      "layout": {
+        "x": 8,
+        "y": 6,
+        "width": 4,
+        "height": 2
+      }
+    },
+    {
+      "id": 15,
+      "definition": {
+        "title": "Error Rate by Type",
+        "type": "toplist",
+        "requests": [
+          {
+            "q": "top(sum:codewarden.error{*} by {error_type}.as_count(), 10, 'sum', 'desc')"
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 8,
+        "width": 6,
+        "height": 2
+      }
+    },
+    {
+      "id": 16,
+      "definition": {
+        "title": "Active Cache Entries",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "max:codewarden.cache.active_entries{*}",
+            "aggregator": "last"
+          }
+        ],
+        "custom_unit": "entries",
+        "precision": 0
+      },
+      "layout": {
+        "x": 6,
+        "y": 8,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 17,
+      "definition": {
+        "title": "Repository Health Scores",
+        "type": "heatmap",
+        "requests": [
+          {
+            "q": "avg:codewarden.repository.health_score{*} by {repository}"
+          }
+        ],
+        "yaxis": {
+          "label": "Health Score (0-100)",
+          "min": "0",
+          "max": "100"
+        }
+      },
+      "layout": {
+        "x": 8,
+        "y": 8,
+        "width": 4,
+        "height": 2
+      }
+    }
+  ],
+  "template_variables": [
+    {
+      "name": "repository",
+      "default": "*",
+      "prefix": "repository"
+    },
+    {
+      "name": "project",
+      "default": "*",
+      "prefix": "project"
+    }
+  ],
+  "layout_type": "ordered",
+  "is_read_only": false,
+  "notify_list": [],
+  "reflow_type": "fixed"
+}

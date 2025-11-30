@@ -1,0 +1,30 @@
+# Include production requirements
+-r requirements.txt
+
+# Testing
+pytest==8.0.2
+pytest-asyncio==0.23.5
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+pytest-timeout==2.2.0
+pytest-benchmark==4.0.0
+aioresponses==0.7.6
+respx==0.21.1
+
+# Code Quality
+black==24.2.0
+ruff==0.2.2
+mypy==1.8.0
+isort==5.13.2
+pylint==3.0.3
+
+# Type Stubs
+types-PyYAML==6.0.12.12
+types-requests==2.31.0.20240125
+
+# Security Scanning
+bandit==1.7.7
+safety==3.0.1
+
+# Pre-commit Hooks
+pre-commit==3.6.2

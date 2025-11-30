@@ -1,0 +1,42 @@
+# Azure Functions Runtime
+azure-functions==1.24.0
+
+# Azure SDKs
+azure-identity==1.19.0
+azure-keyvault-secrets==4.9.0
+
+# Monitoring - Datadog
+ddtrace==2.18.0
+datadog==0.51.0
+
+# AI/LLM SDKs
+openai==1.58.1
+anthropic==0.40.0
+tiktoken==0.8.0
+
+# HTTP & Async
+aiohttp==3.11.9
+httpx==0.28.1
+
+# Data Validation
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# Git/Diff Parsing
+unidiff==0.7.5
+GitPython==3.1.44
+
+# YAML/JSON Processing
+PyYAML==6.0.2
+jsonschema==4.23.0
+
+# Utilities
+python-dotenv==1.0.1
+structlog==24.4.0
+tenacity==9.0.0
+
+# Azure Table Storage
+azure-data-tables==12.7.0
+
+# Security
+cryptography==44.0.0

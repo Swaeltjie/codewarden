@@ -1,0 +1,390 @@
+# src/handlers/reliability_health.py
+"""
+Reliability Health Check Handler
+
+Provides health and metrics endpoints for monitoring reliability features:
+- Circuit breaker states
+- Response cache statistics
+- Idempotency statistics
+
+Version: 2.2.0
+"""
+import structlog
+from datetime import datetime, timezone
+from typing import Dict, Any
+
+from src.services.circuit_breaker import CircuitBreakerManager
+from src.services.response_cache import ResponseCache
+from src.services.idempotency_checker import IdempotencyChecker
+
+logger = structlog.get_logger(__name__)
+
+
+class ReliabilityHealthHandler:
+    """
+    Handler for reliability health check endpoints.
+
+    Provides insights into:
+    - Circuit breaker states (open/closed/half-open)
+    - Cache hit rates and cost savings
+    - Idempotency duplicate detection rates
+    """
+
+    def __init__(self):
+        """Initialize reliability health handler."""
+        self.response_cache = ResponseCache()
+        self.idempotency_checker = IdempotencyChecker()
+        logger.info("reliability_health_handler_initialized")
+
+    async def get_health_status(self) -> Dict[str, Any]:
+        """
+        Get comprehensive health status for all reliability features.
+
+        Returns:
+            Dictionary with health status and metrics
+        """
+        logger.info("reliability_health_check_requested")
+
+        try:
+            # Get circuit breaker states
+            circuit_breaker_states = await CircuitBreakerManager.get_all_states()
+
+            # Get cache statistics (last 30 days)
+            cache_stats = await self.response_cache.get_cache_statistics()
+
+            # Get idempotency statistics (last 7 days)
+            idempotency_stats = await self.idempotency_checker.get_statistics(days=7)
+
+            # Determine overall health
+            overall_health = self._calculate_overall_health(
+                circuit_breaker_states,
+                cache_stats,
+                idempotency_stats
+            )
+
+            response = {
+                "status": overall_health["status"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "version": "2.2.0",
+                "features": {
+                    "circuit_breakers": {
+                        "status": overall_health["circuit_breaker_status"],
+                        "services": circuit_breaker_states,
+                        "summary": self._summarize_circuit_breakers(circuit_breaker_states)
+                    },
+                    "response_cache": {
+                        "status": overall_health["cache_status"],
+                        "statistics": cache_stats,
+                        "health": self._assess_cache_health(cache_stats)
+                    },
+                    "idempotency": {
+                        "status": overall_health["idempotency_status"],
+                        "statistics": idempotency_stats,
+                        "health": self._assess_idempotency_health(idempotency_stats)
+                    }
+                },
+                "overall_health_score": overall_health["health_score"]
+            }
+
+            logger.info(
+                "reliability_health_check_completed",
+                overall_status=overall_health["status"],
+                health_score=overall_health["health_score"]
+            )
+
+            return response
+
+        except Exception as e:
+            logger.exception(
+                "reliability_health_check_failed",
+                error=str(e),
+                error_type=type(e).__name__
+            )
+
+            return {
+                "status": "error",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+
+    def _calculate_overall_health(
+        self,
+        circuit_breaker_states: Dict,
+        cache_stats: Dict,
+        idempotency_stats: Dict
+    ) -> Dict[str, Any]:
+        """
+        Calculate overall health status.
+
+        Args:
+            circuit_breaker_states: Circuit breaker status for all services
+            cache_stats: Cache statistics
+            idempotency_stats: Idempotency statistics
+
+        Returns:
+            Overall health assessment
+        """
+        health_score = 100
+
+        # Circuit breaker health
+        cb_open_count = sum(
+            1 for state in circuit_breaker_states.values()
+            if state.get("state") == "OPEN"
+        )
+        cb_half_open_count = sum(
+            1 for state in circuit_breaker_states.values()
+            if state.get("state") == "HALF_OPEN"
+        )
+
+        if cb_open_count > 0:
+            health_score -= 40  # Critical: services unavailable
+            cb_status = "degraded"
+        elif cb_half_open_count > 0:
+            health_score -= 20  # Warning: services recovering
+            cb_status = "recovering"
+        else:
+            cb_status = "healthy"
+
+        # Cache health
+        cache_efficiency = cache_stats.get("cache_efficiency_percent", 0)
+        if cache_efficiency < 10:
+            health_score -= 10  # Low cache efficiency
+            cache_status = "low_efficiency"
+        elif cache_efficiency < 30:
+            cache_status = "moderate_efficiency"
+        else:
+            cache_status = "high_efficiency"
+
+        # Idempotency health
+        duplicate_rate = idempotency_stats.get("duplicate_rate_percent", 0)
+        if duplicate_rate > 20:
+            health_score -= 15  # High duplicate rate indicates issues
+            idempotency_status = "high_duplicates"
+        elif duplicate_rate > 10:
+            idempotency_status = "moderate_duplicates"
+        else:
+            idempotency_status = "healthy"
+
+        # Determine overall status
+        if health_score >= 90:
+            overall_status = "healthy"
+        elif health_score >= 70:
+            overall_status = "degraded"
+        else:
+            overall_status = "unhealthy"
+
+        return {
+            "status": overall_status,
+            "health_score": health_score,
+            "circuit_breaker_status": cb_status,
+            "cache_status": cache_status,
+            "idempotency_status": idempotency_status
+        }
+
+    def _summarize_circuit_breakers(self, states: Dict) -> Dict[str, int]:
+        """
+        Summarize circuit breaker states.
+
+        Args:
+            states: Circuit breaker states for all services
+
+        Returns:
+            Count of services in each state
+        """
+        summary = {
+            "total_services": len(states),
+            "closed": 0,
+            "open": 0,
+            "half_open": 0
+        }
+
+        for state in states.values():
+            current_state = state.get("state", "unknown").lower()
+            if current_state == "closed":
+                summary["closed"] += 1
+            elif current_state == "open":
+                summary["open"] += 1
+            elif current_state == "half_open":
+                summary["half_open"] += 1
+
+        return summary
+
+    def _assess_cache_health(self, cache_stats: Dict) -> str:
+        """
+        Assess cache health based on statistics.
+
+        Args:
+            cache_stats: Cache statistics
+
+        Returns:
+            Health assessment string
+        """
+        cache_efficiency = cache_stats.get("cache_efficiency_percent", 0)
+        active_entries = cache_stats.get("active_entries", 0)
+        expired_entries = cache_stats.get("expired_entries", 0)
+
+        issues = []
+
+        if cache_efficiency < 10:
+            issues.append("Low cache efficiency (<10%)")
+
+        if active_entries == 0:
+            issues.append("No cached entries")
+
+        if expired_entries > active_entries * 0.5:
+            issues.append(f"High expired ratio ({expired_entries}/{active_entries})")
+
+        if issues:
+            return "Issues: " + ", ".join(issues)
+        elif cache_efficiency > 30:
+            return "Excellent cache performance"
+        elif cache_efficiency > 10:
+            return "Good cache performance"
+        else:
+            return "Building cache"
+
+    def _assess_idempotency_health(self, idempotency_stats: Dict) -> str:
+        """
+        Assess idempotency health based on statistics.
+
+        Args:
+            idempotency_stats: Idempotency statistics
+
+        Returns:
+            Health assessment string
+        """
+        duplicate_rate = idempotency_stats.get("duplicate_rate_percent", 0)
+        total_requests = idempotency_stats.get("total_requests", 0)
+
+        if total_requests == 0:
+            return "No requests tracked yet"
+
+        if duplicate_rate > 20:
+            return f"High duplicate rate ({duplicate_rate:.1f}%) - investigate webhook retries"
+        elif duplicate_rate > 10:
+            return f"Moderate duplicate rate ({duplicate_rate:.1f}%) - normal retry behavior"
+        elif duplicate_rate > 0:
+            return f"Low duplicate rate ({duplicate_rate:.1f}%) - healthy"
+        else:
+            return "No duplicates detected - excellent"
+
+    async def get_circuit_breaker_status(self) -> Dict[str, Any]:
+        """
+        Get detailed circuit breaker status.
+
+        Returns:
+            Circuit breaker states for all services
+        """
+        try:
+            states = await CircuitBreakerManager.get_all_states()
+
+            return {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "circuit_breakers": states,
+                "summary": self._summarize_circuit_breakers(states)
+            }
+
+        except Exception as e:
+            logger.exception("circuit_breaker_status_failed", error=str(e))
+            return {"error": str(e)}
+
+    async def get_cache_statistics(self, repository: str = None) -> Dict[str, Any]:
+        """
+        Get detailed cache statistics.
+
+        Args:
+            repository: Optional repository filter
+
+        Returns:
+            Cache statistics
+        """
+        try:
+            stats = await self.response_cache.get_cache_statistics(repository=repository)
+
+            return {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "cache_statistics": stats,
+                "health_assessment": self._assess_cache_health(stats)
+            }
+
+        except Exception as e:
+            logger.exception("cache_statistics_failed", error=str(e))
+            return {"error": str(e)}
+
+    async def get_idempotency_statistics(self, days: int = 7) -> Dict[str, Any]:
+        """
+        Get detailed idempotency statistics.
+
+        Args:
+            days: Number of days to analyze
+
+        Returns:
+            Idempotency statistics
+        """
+        try:
+            stats = await self.idempotency_checker.get_statistics(days=days)
+
+            return {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "idempotency_statistics": stats,
+                "health_assessment": self._assess_idempotency_health(stats)
+            }
+
+        except Exception as e:
+            logger.exception("idempotency_statistics_failed", error=str(e))
+            return {"error": str(e)}
+
+    async def reset_circuit_breakers(self) -> Dict[str, Any]:
+        """
+        Manually reset all circuit breakers (admin operation).
+
+        Returns:
+            Reset confirmation
+        """
+        try:
+            logger.warning("circuit_breakers_manual_reset_requested")
+
+            await CircuitBreakerManager.reset_all()
+
+            logger.info("circuit_breakers_reset_completed")
+
+            return {
+                "status": "success",
+                "message": "All circuit breakers reset to CLOSED state",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+
+        except Exception as e:
+            logger.exception("circuit_breaker_reset_failed", error=str(e))
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    async def cleanup_expired_cache(self) -> Dict[str, Any]:
+        """
+        Manually trigger cache cleanup (admin operation).
+
+        Returns:
+            Cleanup results
+        """
+        try:
+            logger.info("cache_cleanup_requested")
+
+            deleted_count = await self.response_cache.cleanup_expired_entries()
+
+            logger.info("cache_cleanup_completed", deleted_count=deleted_count)
+
+            return {
+                "status": "success",
+                "deleted_entries": deleted_count,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+
+        except Exception as e:
+            logger.exception("cache_cleanup_failed", error=str(e))
+            return {
+                "status": "error",
+                "error": str(e)
+            }
