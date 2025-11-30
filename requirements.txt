@@ -15,7 +15,7 @@ anthropic==0.40.0
 tiktoken==0.8.0
 
 # HTTP & Async
-aiohttp==3.11.9
+aiohttp==3.12.14
 httpx==0.28.1
 
 # Data Validation
@@ -39,4 +39,4 @@ tenacity==9.0.0
 azure-data-tables==12.7.0
 
 # Security
-cryptography==44.0.0
+cryptography==44.0.1
