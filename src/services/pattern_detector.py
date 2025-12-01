@@ -8,7 +8,7 @@ Version: 2.5.0 - Added metrics/observability support
 """
 import structlog
 import json
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timezone, timedelta
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -35,7 +35,7 @@ class PatternDetectorMetrics:
     - Pattern detection rates
     """
     analysis_started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    analysis_completed_at: datetime = None
+    analysis_completed_at: Optional[datetime] = None
     repositories_analyzed: int = 0
     reviews_processed: int = 0
     patterns_found: int = 0
@@ -77,11 +77,11 @@ class PatternDetector:
         """Initialize pattern detector."""
         self.settings = get_settings()
         self._closed = False
-        self._last_metrics: PatternDetectorMetrics = None
+        self._last_metrics: Optional[PatternDetectorMetrics] = None
         logger.info("pattern_detector_initialized")
 
     @property
-    def last_metrics(self) -> PatternDetectorMetrics:
+    def last_metrics(self) -> Optional[PatternDetectorMetrics]:
         """Get metrics from last analysis run."""
         return self._last_metrics
 

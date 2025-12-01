@@ -62,10 +62,14 @@ def sample_pr_event():
 @pytest.fixture
 def sample_diff_content():
     """Sample unified diff content for testing."""
+    # Hunk header: @@ -old_start,old_lines +new_start,new_lines @@
+    # Context (space): 3, Removed (-): 1, Added (+): 5
+    # Old = 3 context + 1 removed = 4 lines
+    # New = 3 context + 5 added = 8 lines
     return """diff --git a/main.tf b/main.tf
 --- a/main.tf
 +++ b/main.tf
-@@ -1,5 +1,7 @@
+@@ -1,4 +1,8 @@
  resource "azurerm_resource_group" "example" {
    name     = "example-resources"
 -  location = "West Europe"

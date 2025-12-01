@@ -21,8 +21,8 @@ class TestDiffParser:
         assert len(result) > 0
         section = result[0]
 
-        # Verify section properties
-        assert section.file_path == "/main.tf"
+        # Verify section properties (diff parser returns path without leading slash)
+        assert section.file_path == "main.tf"
         assert len(section.added_lines) > 0
         assert len(section.removed_lines) > 0
 
