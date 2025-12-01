@@ -1,25 +1,19 @@
-# AI PR Reviewer - Implementation
-
-**Version:** 2.0.0  
-**Status:** ✅ Production Ready  
-**Last Updated:** 2025-11-30
+# CodeWarden
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Type checked: mypy](http://www.mypy-lang.org/static/mypy_badge.svg)](http://mypy-lang.org/)
 
-AI-powered Pull Request reviewer for Azure DevOps with support for Terraform, Ansible, Azure Pipelines, and JSON configurations.
+AI-powered Pull Request reviewer for Azure DevOps supporting Terraform, Ansible, Azure Pipelines, and JSON configurations.
 
 ## ✨ Features
 
-- **Multi-Technology Support:** Terraform, Ansible, Azure Pipelines (YAML), JSON Configurations
+- **Multi-Technology Support:** Terraform, Ansible, Azure Pipelines, JSON
 - **Diff-Only Analysis:** 50-85% token savings vs. full-file reviews
-- **Feedback Learning:** Adapts to your team's preferences over time
-- **Pattern Detection:** Identifies recurring issues across PRs
-- **Human Decision Framework:** Clear approve/reject recommendations
+- **Feedback Learning:** Adapts to team preferences over time
 - **Enterprise Security:** Azure Key Vault, Managed Identity, structured logging
-- **Production-Ready:** Type safety, error handling, comprehensive testing
+- **Type-Safe:** Pydantic models, mypy checking, comprehensive testing
 
 ## 🏗️ Architecture Overview
 
@@ -82,40 +76,12 @@ AI-powered Pull Request reviewer for Azure DevOps with support for Terraform, An
 
 ```
 1. PR Created/Updated → Webhook → Azure Function
-
-2. Fetch PR Details
-   ├─ Get changed files
-   ├─ Download diffs
-   └─ Classify file types
-
-3. Parse Diffs (Diff-Only Analysis)
-   ├─ Extract changed lines
-   ├─ Add 3 lines context before/after
-   └─ Calculate token savings (50-85%)
-
-4. Determine Review Strategy
-   ├─ Small PR (≤5 files)    → Single-pass review
-   ├─ Medium PR (6-15 files) → Chunked review
-   └─ Large PR (>15 files)   → Hierarchical review
-
-5. Get Learning Context
-   ├─ Load feedback from past reviews
-   ├─ Identify high/low value checks
-   └─ Apply team-specific patterns
-
-6. AI Review
-   ├─ Build technology-specific prompts
-   ├─ Call OpenAI API (with retry)
-   └─ Parse structured JSON response
-
-7. Post Results to Azure DevOps
-   ├─ Summary comment (all PRs)
-   └─ Inline comments (critical/high issues)
-
-8. Track Feedback (Background)
-   ├─ Monitor thread reactions (thumbs up/down)
-   ├─ Track resolved/won't fix status
-   └─ Update learning model
+2. Fetch PR details & parse diffs (diff-only analysis)
+3. Determine review strategy (single-pass, chunked, or hierarchical)
+4. Apply learning context from past feedback
+5. AI review with technology-specific prompts
+6. Post results to Azure DevOps (summary + inline comments)
+7. Track feedback for continuous improvement
 ```
 
 ### Technology Stack
@@ -130,61 +96,16 @@ AI-powered Pull Request reviewer for Azure DevOps with support for Terraform, An
 | **Monitoring** | Datadog (your existing infrastructure) | Logging, metrics & APM |
 | **DevOps** | Azure DevOps API | PR integration |
 
-### Data Storage Strategy
+### Data Storage
 
-**Why Azure Table Storage? (Recommended)**
+**Azure Table Storage** stores feedback tracking and review history:
+- Cost-effective: $0.10/month vs Cosmos DB $25/month
+- Fast key-value access (sub-100ms)
+- Tracks feedback (accepted/rejected suggestions) and review metrics
 
-We use **Azure Table Storage** for Phase 2 features (feedback tracking, pattern detection):
+For global distribution or complex queries, consider Cosmos DB.
 
-✅ **Advantages:**
-- **Cost-effective:** $0.045/GB/month (vs Cosmos DB ~10-20x more)
-- **Simple key-value storage:** Perfect for our access patterns
-- **Fast:** Sub-100ms queries
-- **Integrated:** Part of Storage Account (already needed)
-- **Reliable:** 99.9% SLA
-
-**Data Models:**
-```python
-# Feedback Entry (Table Storage)
-PartitionKey: repository_name
-RowKey: feedback_id
-{
-  "pr_id": "123",
-  "suggestion_id": "sg_456",
-  "issue_type": "PublicEndpoint",
-  "severity": "High",
-  "feedback": "Accepted",  # or Rejected, Ignored
-  "timestamp": "2025-11-30T12:00:00Z"
-}
-
-# Review History (Table Storage)
-PartitionKey: repository_name
-RowKey: pr_id
-{
-  "files_reviewed": 5,
-  "issues_found": 12,
-  "issues_fixed": 10,
-  "duration_seconds": 15,
-  "recommendation": "approve"
-}
-```
-
-**Alternative: Cosmos DB**
-
-Use Cosmos DB if you need:
-- Global distribution (multi-region)
-- Complex queries (GraphQL, SQL API)
-- Auto-scaling to massive scale
-- Multi-model support
-
-**Cost Comparison (1,000 entries/month):**
-- Table Storage: ~$0.10/month ✅
-- Cosmos DB Serverless: ~$1-2/month
-- Cosmos DB Provisioned: ~$25/month
-
-**Recommendation:** Start with **Table Storage**. Migrate to Cosmos DB later if you need global scale.
-
-📖 **[See detailed architecture documentation](docs/ARCHITECTURE.md)** for complete system design, data models, and scaling strategies.
+📖 **[See detailed architecture documentation](docs/ARCHITECTURE.md)** for complete system design and data models.
 
 ---
 
@@ -261,36 +182,12 @@ ai-pr-reviewer/
 
 ## 🎯 Why Python?
 
-| Factor | Python | C# | Winner |
-|--------|--------|-----|--------|
-| AI Libraries | Excellent | Good | 🐍 Python |
-| Development Speed | Very Fast | Fast | 🐍 Python |
-| Text Processing | Excellent | Good | 🐍 Python |
-| Cold Start | 2.5s | 1.5s | C# |
-| Execution Speed | Moderate | Fast | C# |
-| For AI Workload | **Optimal** | Good | 🐍 **Python** |
+Python provides excellent AI/LLM library support and rapid development. The ~1s cold start overhead is negligible compared to 20s average review times.
 
-**Verdict:** Python's 50ms overhead is < 1% of total 20s review time. AI library support and development speed make it the better choice.
+## 📊 Performance
 
-## 📊 Performance Metrics
-
-### Token Savings (Diff-Only Analysis)
-
-```
-Traditional (Full Files):
-20 files × 5,000 tokens = 100,000 tokens → $1.00
-
-Diff-Only:
-200 changed lines × 6 (context) = 1,200 tokens → $0.12
-
-Savings: 88% ✨
-```
-
-### Review Times
-
-- Small PR (5 files): 5-8 seconds
-- Medium PR (15 files): 12-18 seconds
-- Large PR (50 files): 25-40 seconds
+**Token Savings (Diff-Only):** 50-88% reduction vs. full-file analysis
+**Review Times:** 5-8s (small), 12-18s (medium), 25-40s (large PRs)
 
 ## 🛠️ Development
 
@@ -345,48 +242,18 @@ pre-commit run --all-files
 
 ## 💰 Cost
 
-### Development/PoC
-- **Total:** ~$10/month
-  - Function App (Consumption): $0.10
-  - Storage Account: $1
-  - Table Storage: $0.10
-  - Key Vault: $0.50
-  - OpenAI API (diff-only): $8 ✅ (vs $50 full-file)
-  - Datadog: $0 (using existing infrastructure)
+**Development:** ~$10/month (Consumption plan + infrastructure)
+**Production:** ~$160/month (Premium EP1 + infrastructure)
 
-### Production (100 PRs/month)
-- **Total:** ~$160/month
-  - Function App Premium EP1: $150
-  - Infrastructure: $10
-  - OpenAI API: $8 (with diff-only)
-  - Datadog: Included in existing subscription
-
-**Cost Savings:**
-- Table Storage vs Cosmos DB: **$1-2/month saved**
-- Diff-only vs full-file: **$42/month saved**
-- Using existing Datadog vs new App Insights: **$2-5/month saved**
-- **Total savings: $45-49/month** (82% reduction from baseline)
-
-**Comparison:**
+**vs. Alternatives:**
 - CodeRabbit: $380-780/month (20 users)
 - GitHub Copilot: $200-780/month (20 users)
-- **Your solution: $10-160/month** ✅ **3-78x cheaper**
+- **CodeWarden: $10-160/month** (3-78x cheaper)
 
 ## 📝 License
 
 MIT License - see LICENSE file for details
 
-## 🙏 Acknowledgments
-
-Built with:
-- [Azure Functions](https://azure.microsoft.com/en-us/services/functions/)
-- [OpenAI API](https://openai.com/api/)
-- [Pydantic](https://pydantic-docs.helpmanual.io/)
-- [structlog](https://www.structlog.org/)
-- [pytest](https://pytest.org/)
-
 ---
 
-**Ready to deploy!** 🚀
-
-See [DEPLOYMENT-GUIDE.md](docs/DEPLOYMENT-GUIDE.md) for complete deployment instructions.
+**Ready to deploy!** See [DEPLOYMENT-GUIDE.md](docs/DEPLOYMENT-GUIDE.md) for complete instructions.
