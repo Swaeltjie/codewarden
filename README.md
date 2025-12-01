@@ -26,15 +26,15 @@ AI-powered Pull Request reviewer for Azure DevOps supporting Terraform, Ansible,
 └────────┬────────┘
          │ PR Event
          ▼
-┌─────────────────────────────────────────────────────────┐
-│              Azure Functions (Python 3.12)               │
-│                                                          │
+┌────────────────────────────────────────────────────────┐
+│              Azure Functions (Python 3.12)             │
+│                                                        │
 │  ┌──────────────┐    ┌──────────────┐                  │
 │  │ HTTP Trigger │    │Timer Trigger │                  │
 │  │ pr_webhook   │    │  feedback    │                  │
 │  └──────┬───────┘    └──────┬───────┘                  │
-│         │                    │                          │
-│         ▼                    ▼                          │
+│         │                    │                         │
+│         ▼                    ▼                         │
 │  ┌─────────────────────────────────────┐               │
 │  │      PR Review Orchestrator         │               │
 │  │  • Fetch changed files              │               │
