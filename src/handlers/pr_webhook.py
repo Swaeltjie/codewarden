@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.2.0 - Added idempotency, caching, circuit breaker
+Version: 2.3.0 - Added rate limiting, improved circuit breaker, connection pooling
 """
 import asyncio
 from typing import List, Optional

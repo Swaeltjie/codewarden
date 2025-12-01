@@ -6,10 +6,11 @@ Handles interactions with OpenAI API for code review analysis.
 Includes retry logic, rate limiting, structured response parsing,
 and circuit breaker protection.
 
-Version: 2.2.0
+Version: 2.3.0
 """
+import asyncio
 from openai import AsyncOpenAI
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import json
 import structlog
 from tenacity import (

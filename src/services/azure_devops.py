@@ -12,8 +12,9 @@ Authentication:
 
 Reliability:
 - Circuit breaker protection
+- Connection pool tuning
 
-Version: 2.2.0
+Version: 2.3.0
 """
 import aiohttp
 import asyncio
@@ -138,7 +139,20 @@ class AzureDevOpsClient:
                 if self._session is None or self._session.closed:
                     auth_header = await self._get_auth_token()
 
+                    # Connection pool tuning for production workloads
+                    # - limit: Max simultaneous connections (Azure DevOps can handle 100+)
+                    # - limit_per_host: Max connections per host (prevent overwhelming single endpoint)
+                    # - ttl_dns_cache: Cache DNS for 5 minutes (reduce DNS lookups)
+                    # - enable_cleanup_closed: Clean up closed connections automatically
+                    connector = aiohttp.TCPConnector(
+                        limit=100,           # Total connection pool size
+                        limit_per_host=30,   # Per-host limit for Azure DevOps
+                        ttl_dns_cache=300,   # DNS cache TTL (5 minutes)
+                        enable_cleanup_closed=True
+                    )
+
                     self._session = aiohttp.ClientSession(
+                        connector=connector,
                         headers={
                             "Authorization": auth_header,
                             "Content-Type": "application/json",

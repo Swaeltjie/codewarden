@@ -4,7 +4,7 @@ Idempotency Checker
 
 Prevents duplicate PR review processing when webhooks are retried.
 
-Version: 2.2.0
+Version: 2.3.0
 """
 import structlog
 from typing import Optional, Dict

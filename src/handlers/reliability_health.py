@@ -7,7 +7,7 @@ Provides health and metrics endpoints for monitoring reliability features:
 - Response cache statistics
 - Idempotency statistics
 
-Version: 2.2.0
+Version: 2.3.0
 """
 import structlog
 from datetime import datetime, timezone

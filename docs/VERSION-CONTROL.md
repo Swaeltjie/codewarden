@@ -1,13 +1,52 @@
 # Version Control & Changelog
 
-## Current Version: 2.2.0 (Production Ready)
+## Current Version: 2.3.0 (Production Ready)
 
-**Release Date:** 2025-11-30
-**Status:** ✅ Production Ready (Reliability Enhancements Added)
+**Release Date:** 2025-12-01
+**Status:** ✅ Production Ready (Security & Performance Improvements)
 
 ---
 
 ## Version History
+
+### v2.3.0 - Security & Performance Improvements (2025-12-01)
+
+**Minor Release** - Critical bug fixes and performance enhancements
+
+#### ✅ Critical Bug Fixes
+
+**Circuit Breaker Infinite Wait:**
+- ✅ Added 30-second timeout on lock acquisition
+- ✅ Prevents indefinite blocking when lock is held
+- ✅ Proper lock release with try/finally blocks
+
+**Missing asyncio Import:**
+- ✅ Added `import asyncio` to ai_client.py
+- ✅ Fixes `asyncio.wait_for` usage in API timeout handling
+
+#### ✅ New Features
+
+**Rate Limiting:**
+- ✅ Sliding window rate limiter (100 req/min per IP)
+- ✅ Proper 429 responses with Retry-After header
+- ✅ X-Forwarded-For support for load balancers
+
+**Suggested Fix Generation:**
+- ✅ AI prompts request code-level fixes
+- ✅ New `suggested_fix` field with before/after code
+- ✅ Copy-pasteable solutions for developers
+
+**Connection Pool Tuning:**
+- ✅ Custom TCPConnector for Azure DevOps client
+- ✅ 100 connections total, 30 per-host limit
+- ✅ DNS caching with 5-minute TTL
+
+**Resource Cleanup:**
+- ✅ atexit handler for shutdown cleanup
+- ✅ SecretManager credential cleanup
+- ✅ Prevents resource leaks
+
+---
 
 ### v2.2.0 - Reliability Enhancements (2025-11-30)
 

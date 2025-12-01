@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.2.0
+Version: 2.3.0
 """
 import structlog
 import json

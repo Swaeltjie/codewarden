@@ -4,7 +4,7 @@ Prompt Factory for AI Code Reviews
 
 Generates specialized prompts for different file types and review strategies.
 
-Version: 1.0.0
+Version: 2.3.0 - Added suggested fix generation with code snippets
 """
 from typing import List, Dict
 from src.models.pr_event import FileChange, FileType
@@ -232,7 +232,7 @@ class PromptFactory:
         return "\n".join(instructions)
     
     def _get_response_format(self) -> str:
-        """Get required JSON response format."""
+        """Get required JSON response format with suggested fixes."""
         return """## Response Format
 
 Respond with valid JSON only:
@@ -246,8 +246,13 @@ Respond with valid JSON only:
       "line_number": 10,
       "issue_type": "PublicEndpoint",
       "message": "Clear description of the issue",
-      "suggestion": "How to fix it (optional)",
-      "code_snippet": "Relevant code (optional)"
+      "suggestion": "How to fix it",
+      "suggested_fix": {
+        "description": "Brief description of the fix",
+        "before": "code_that_has_the_issue",
+        "after": "fixed_code_snippet",
+        "explanation": "Why this fix works"
+      }
     }
   ],
   "recommendation": "approve|request_changes|comment",
@@ -259,6 +264,9 @@ Respond with valid JSON only:
 - severity must be: critical, high, medium, low, or info
 - recommendation must be: approve, request_changes, or comment
 - line_number should be 0 if file-level issue
-- Focus on actionable, specific feedback
-- Avoid generic advice
+- **Always include suggested_fix for critical and high severity issues**
+- suggested_fix.before should show the problematic code
+- suggested_fix.after should show the corrected code
+- Focus on actionable, specific feedback with working code fixes
+- Avoid generic advice - provide copy-pasteable solutions
 """

@@ -5,6 +5,90 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2025-12-01
+
+### Added - Security & Performance Improvements
+
+- **Rate Limiting on Webhook Endpoint**
+  - In-memory sliding window rate limiter (100 requests/minute per IP)
+  - Proper `429 Too Many Requests` responses with `Retry-After` header
+  - Client IP extraction supporting `X-Forwarded-For` for load balancer deployments
+  - Prevents webhook abuse and DoS attacks
+
+- **Suggested Fix Generation**
+  - AI prompts now request code-level fix suggestions
+  - New `suggested_fix` field in issue responses with `before`/`after` code snippets
+  - Copy-pasteable solutions for critical and high severity issues
+  - Explanation of why fixes work for developer education
+
+- **Connection Pool Tuning**
+  - Custom `TCPConnector` configuration for Azure DevOps client
+  - 100 total connections, 30 per-host limit
+  - DNS cache with 5-minute TTL
+  - Automatic closed connection cleanup
+  - Improved performance under high load
+
+- **Resource Cleanup Handlers**
+  - `atexit` handler for proper shutdown cleanup
+  - `cleanup_secret_manager()` called on application shutdown
+  - Prevents credential resource leaks in long-running instances
+
+### Fixed - Critical Bug Fixes
+
+- **Circuit Breaker Infinite Wait** (Critical)
+  - Added 30-second timeout on lock acquisition
+  - Prevents indefinite blocking when lock is held
+  - Proper lock release with `try/finally` blocks
+  - Non-blocking success/failure recording
+
+- **Missing asyncio Import** (Critical)
+  - Added `import asyncio` to ai_client.py
+  - Fixes `asyncio.wait_for` usage in API timeout handling
+
+### Changed
+
+- **AI Client (ai_client.py)** - Version 2.3.0
+  - Added missing asyncio import
+  - Enhanced request timeout handling
+
+- **Circuit Breaker (circuit_breaker.py)** - Version 2.3.0
+  - Lock timeout protection (30 seconds max wait)
+  - Improved lock management prevents deadlocks
+  - Better error logging for timeout scenarios
+
+- **Azure DevOps Client (azure_devops.py)** - Version 2.3.0
+  - Connection pool tuning with custom TCPConnector
+  - Better resource utilization for concurrent requests
+
+- **PR Webhook Handler (pr_webhook.py)** - Version 2.3.0
+  - Integrated rate limiting check at entry point
+  - Improved request validation flow
+
+- **Prompt Factory (factory.py)** - Version 2.3.0
+  - Enhanced response format with suggested_fix structure
+  - Explicit instructions for code-level fixes
+
+- **Function App (function_app.py)** - Version 2.3.0
+  - Rate limiting middleware
+  - Shutdown cleanup handlers
+  - Updated health check version
+
+### Technical Details
+
+- **Rate Limiting**: Sliding window counter, per-IP tracking, 60-second window
+- **Circuit Breaker**: 30-second lock timeout, proper try/finally release
+- **Connection Pool**: TCPConnector(limit=100, limit_per_host=30, ttl_dns_cache=300)
+- **Cleanup**: atexit handler for SecretManager credential cleanup
+
+### Migration Notes
+
+- No breaking changes - fully backward compatible with v2.2.0
+- Rate limiting activates automatically (100 req/min per IP)
+- Circuit breaker improvements are transparent
+- Connection pool tuning is automatic
+
+---
+
 ## [2.2.0] - 2025-11-30
 
 ### Added - Reliability Enhancements (Production Ready)

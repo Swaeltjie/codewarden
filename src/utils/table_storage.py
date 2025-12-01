@@ -4,7 +4,7 @@ Azure Table Storage Utilities
 
 Helper functions for interacting with Azure Table Storage using Managed Identity.
 
-Version: 2.2.0 - Fixed resource leak, added retry logic
+Version: 2.3.0 - Fixed resource leak, added retry logic, pagination
 """
 from azure.data.tables import TableServiceClient, TableClient
 from azure.identity import DefaultAzureCredential

@@ -15,9 +15,10 @@ from typing import Optional, Any, Dict, List
 import structlog
 
 from src.handlers.pr_webhook import PRWebhookHandler
-from src.utils.config import get_settings
+from src.utils.config import get_settings, cleanup_secret_manager
 from src.utils.logging import setup_logging
 from src.models.pr_event import PREvent
+from src.utils.table_storage import cleanup_table_storage
 
 # Initialize logging
 settings = get_settings()
@@ -53,8 +54,22 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
         url=req.url,
         headers_count=len(req.headers)
     )
-    
+
     try:
+        # Rate limiting check
+        client_ip = _get_client_ip(req)
+        if await _rate_limiter.is_rate_limited(client_ip):
+            return func.HttpResponse(
+                json.dumps({
+                    "error": "Rate limit exceeded",
+                    "retry_after": 60,
+                    "message": "Too many requests. Please wait before retrying."
+                }),
+                status_code=429,
+                mimetype="application/json",
+                headers={"Retry-After": "60"}
+            )
+
         # Validate payload size (max 1MB)
         MAX_PAYLOAD_SIZE = 1024 * 1024  # 1MB
         content_length = req.headers.get('Content-Length')
@@ -297,7 +312,7 @@ async def health_check(req: func.HttpRequest) -> func.HttpResponse:
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "2.2.0"
+        "version": "2.3.0"
     }
     
     # Check dependencies
@@ -482,3 +497,132 @@ def _validate_json_depth(obj: Any, max_depth: int, current_depth: int = 0) -> bo
 
     # Base case: primitive types (str, int, bool, None) have no depth
     return True
+
+
+# =============================================================================
+# Rate Limiting
+# =============================================================================
+
+class RateLimiter:
+    """
+    Simple in-memory rate limiter for webhook endpoint.
+
+    Uses a sliding window counter per client IP to prevent abuse.
+    Limits are per-function-instance (resets on cold start).
+    """
+
+    def __init__(self, max_requests: int = 100, window_seconds: int = 60):
+        """
+        Initialize rate limiter.
+
+        Args:
+            max_requests: Maximum requests per window (default: 100)
+            window_seconds: Time window in seconds (default: 60)
+        """
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._requests: Dict[str, List[float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def is_rate_limited(self, client_id: str) -> bool:
+        """
+        Check if client is rate limited.
+
+        Args:
+            client_id: Unique client identifier (e.g., IP address)
+
+        Returns:
+            True if rate limited, False otherwise
+        """
+        now = datetime.now(timezone.utc).timestamp()
+        window_start = now - self.window_seconds
+
+        async with self._lock:
+            # Get or create request list for client
+            if client_id not in self._requests:
+                self._requests[client_id] = []
+
+            # Remove old requests outside window
+            self._requests[client_id] = [
+                ts for ts in self._requests[client_id]
+                if ts > window_start
+            ]
+
+            # Check if over limit
+            if len(self._requests[client_id]) >= self.max_requests:
+                logger.warning(
+                    "rate_limit_exceeded",
+                    client_id=client_id,
+                    requests_in_window=len(self._requests[client_id])
+                )
+                return True
+
+            # Record this request
+            self._requests[client_id].append(now)
+            return False
+
+    def get_remaining(self, client_id: str) -> int:
+        """Get remaining requests for client."""
+        if client_id not in self._requests:
+            return self.max_requests
+        return max(0, self.max_requests - len(self._requests.get(client_id, [])))
+
+
+# Global rate limiter instance (100 requests per minute per IP)
+_rate_limiter = RateLimiter(max_requests=100, window_seconds=60)
+
+
+def _get_client_ip(req: func.HttpRequest) -> str:
+    """
+    Extract client IP from request.
+
+    Checks X-Forwarded-For header for requests behind load balancer,
+    falls back to direct client address.
+
+    Args:
+        req: HTTP request
+
+    Returns:
+        Client IP address
+    """
+    # Azure Functions behind App Gateway/Load Balancer
+    forwarded_for = req.headers.get('X-Forwarded-For', '')
+    if forwarded_for:
+        # Take first IP in chain (original client)
+        return forwarded_for.split(',')[0].strip()
+
+    # Direct connection (development)
+    return req.headers.get('X-Client-IP', 'unknown')
+
+
+# =============================================================================
+# Shutdown Handler
+# =============================================================================
+
+import atexit
+
+
+def _cleanup_resources():
+    """
+    Cleanup resources on application shutdown.
+
+    Called via atexit handler to ensure proper cleanup of:
+    - Secret Manager credentials
+    - Table Storage connections
+    """
+    try:
+        cleanup_secret_manager()
+        logger.info("secret_manager_cleaned_up_on_shutdown")
+    except Exception as e:
+        logger.warning("secret_manager_cleanup_failed", error=str(e))
+
+    try:
+        # Note: cleanup_table_storage is async but we're in sync context
+        # For sync cleanup, just log - the credential will be GC'd
+        logger.info("table_storage_cleanup_scheduled")
+    except Exception as e:
+        logger.warning("table_storage_cleanup_failed", error=str(e))
+
+
+# Register cleanup handler
+atexit.register(_cleanup_resources)

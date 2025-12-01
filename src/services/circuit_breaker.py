@@ -4,13 +4,16 @@ Circuit Breaker Pattern
 
 Prevents cascading failures when external services are down.
 
-Version: 2.2.0
+Version: 2.3.0
 """
 import structlog
 from typing import Callable, Any, Optional, Dict
 from datetime import datetime, timezone, timedelta
 import asyncio
 from functools import wraps
+
+# Maximum time to wait for circuit breaker lock (seconds)
+LOCK_TIMEOUT_SECONDS = 30
 
 from src.models.reliability import CircuitBreakerState
 
@@ -86,10 +89,23 @@ class CircuitBreaker:
             Function result
 
         Raises:
-            CircuitBreakerError: If circuit is open
+            CircuitBreakerError: If circuit is open or lock timeout
             Exception: Original exception from function
         """
-        async with self._lock:
+        # Use timeout on lock acquisition to prevent infinite wait
+        try:
+            await asyncio.wait_for(self._lock.acquire(), timeout=LOCK_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.error(
+                "circuit_breaker_lock_timeout",
+                service_name=self.service_name,
+                timeout_seconds=LOCK_TIMEOUT_SECONDS
+            )
+            raise CircuitBreakerError(
+                f"Circuit breaker lock timeout for {self.service_name} after {LOCK_TIMEOUT_SECONDS}s"
+            )
+
+        try:
             # Check if request should be allowed
             if not self.state.should_allow_request():
                 logger.warning(
@@ -113,39 +129,58 @@ class CircuitBreaker:
                         "circuit_breaker_half_open",
                         service_name=self.service_name
                     )
+        finally:
+            # Always release lock after state check
+            self._lock.release()
 
-        # Execute the function
+        # Execute the function (outside of lock)
         try:
             result = await func(*args, **kwargs)
 
-            # Record success
-            async with self._lock:
-                self.state.record_success(success_threshold=self.success_threshold)
-
-                logger.debug(
-                    "circuit_breaker_success",
-                    service_name=self.service_name,
-                    state=self.state.state,
-                    success_count=self.state.success_count
+            # Record success (acquire lock with timeout)
+            try:
+                await asyncio.wait_for(self._lock.acquire(), timeout=LOCK_TIMEOUT_SECONDS)
+                try:
+                    self.state.record_success(success_threshold=self.success_threshold)
+                    logger.debug(
+                        "circuit_breaker_success",
+                        service_name=self.service_name,
+                        state=self.state.state,
+                        success_count=self.state.success_count
+                    )
+                finally:
+                    self._lock.release()
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "circuit_breaker_success_lock_timeout",
+                    service_name=self.service_name
                 )
 
             return result
 
         except Exception as e:
-            # Record failure
-            async with self._lock:
-                self.state.record_failure(
-                    failure_threshold=self.failure_threshold,
-                    timeout_seconds=self.timeout_seconds
-                )
-
+            # Record failure (acquire lock with timeout)
+            try:
+                await asyncio.wait_for(self._lock.acquire(), timeout=LOCK_TIMEOUT_SECONDS)
+                try:
+                    self.state.record_failure(
+                        failure_threshold=self.failure_threshold,
+                        timeout_seconds=self.timeout_seconds
+                    )
+                    logger.warning(
+                        "circuit_breaker_failure",
+                        service_name=self.service_name,
+                        state=self.state.state,
+                        failure_count=self.state.failure_count,
+                        error=str(e),
+                        error_type=type(e).__name__
+                    )
+                finally:
+                    self._lock.release()
+            except asyncio.TimeoutError:
                 logger.warning(
-                    "circuit_breaker_failure",
-                    service_name=self.service_name,
-                    state=self.state.state,
-                    failure_count=self.state.failure_count,
-                    error=str(e),
-                    error_type=type(e).__name__
+                    "circuit_breaker_failure_lock_timeout",
+                    service_name=self.service_name
                 )
 
             # Re-raise the original exception

@@ -4,7 +4,7 @@ Reliability Models
 
 Data models for idempotency tracking and response caching.
 
-Version: 2.2.0
+Version: 2.3.0
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
