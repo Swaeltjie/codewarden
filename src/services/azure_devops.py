@@ -49,7 +49,7 @@ class DevOpsRateLimitError(Exception):
 
 class AzureDevOpsClient:
     """
-    Client for Azure DevOps REST API v7.0.
+    Client for Azure DevOps REST API v7.1.
 
     Authentication:
     - Uses Azure AD Managed Identity (credential-free)
@@ -71,7 +71,7 @@ class AzureDevOpsClient:
         """
         self.settings = get_settings()
         self.base_url = f"https://dev.azure.com/{self.settings.AZURE_DEVOPS_ORG}"
-        self.api_version = "7.0"
+        self.api_version = "7.1"
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
         self._credential: Optional[DefaultAzureCredential] = None

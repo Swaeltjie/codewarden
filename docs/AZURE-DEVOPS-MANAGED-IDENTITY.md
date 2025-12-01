@@ -352,7 +352,7 @@ Complete these steps to enable Managed Identity authentication:
 ## Resources
 
 - [Microsoft Docs: Service Principal & Managed Identity](https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/service-principal-managed-identity)
-- [Azure DevOps REST API Reference](https://learn.microsoft.com/en-us/rest/api/azure/devops/)
+- [Azure DevOps REST API Reference v7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/?view=azure-devops-rest-7.1)
 - [Azure Identity Library](https://learn.microsoft.com/en-us/python/api/overview/azure/identity-readme)
 - [Blog: Authenticate as Managed Identity](https://blog.xmi.fr/posts/azure-devops-authenticate-as-managed-identity/)
 

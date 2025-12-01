@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.5.0] - 2025-12-01
 
+### Documentation Updates
+
+- **Azure DevOps API Version**
+  - Updated from API version 7.0 to 7.1 (current recommended)
+  - Updated API reference links in documentation
+
+- **host.json Configuration**
+  - Added `extensionBundle` configuration for automatic extension updates
+  - Version range `[4.*, 5.0.0)` for latest extension support
+
+- **Deployment Guide Updates**
+  - Added Python 3.13 GA support note
+  - Added Python 3.9 end-of-support warning (October 2025)
+  - Added Flex Consumption Plan hosting option table
+  - Added webhook security best practices section
+  - Updated host.json troubleshooting with extensionBundle example
+
 ### Added - Reliability & Observability Improvements
 
 - **Centralized Version Management**

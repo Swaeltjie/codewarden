@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.12+ (Python 3.13 GA supported; Python 3.9 support ends October 2025)
 - Azure CLI
 - Azure Functions Core Tools v4
 - Git
@@ -267,6 +267,12 @@ Follow the detailed setup in [AZURE-DEVOPS-MANAGED-IDENTITY.md](AZURE-DEVOPS-MAN
 5. Test the connection
 6. Save
 
+**Security Best Practices:**
+- Use HTTPS only (required)
+- Configure webhook secret for request validation
+- CodeWarden validates secrets using constant-time comparison (prevents timing attacks)
+- Azure DevOps REST API version 7.1 is used for all operations
+
 ---
 
 ## Monitoring & Troubleshooting
@@ -396,6 +402,16 @@ jobs:
 3. ✅ Use diff-only analysis (88% token savings)
 4. ✅ Use Consumption plan (pay per execution)
 
+### Hosting Plan Options (2025)
+
+| Plan | Best For | Cold Start | Cost |
+|------|----------|------------|------|
+| **Consumption** | Dev/test, low traffic | 5-15s | $0.10/month |
+| **Flex Consumption** (New) | Better scaling, private networking | Reduced | Varies |
+| **Premium EP1** | Production, APIs | None | ~$150/month |
+
+**Note:** Consider Flex Consumption Plan for production workloads requiring better scaling and private networking without Premium pricing.
+
 ---
 
 ## Troubleshooting Common Issues
@@ -419,9 +435,15 @@ az keyvault set-policy \
 **Solution:** Increase timeout in `host.json`:
 ```json
 {
-  "functionTimeout": "00:10:00"
+  "functionTimeout": "00:10:00",
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  }
 }
 ```
+
+**Note:** The `extensionBundle` configuration ensures automatic extension updates.
 
 ---
 
