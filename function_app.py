@@ -5,7 +5,7 @@ AI PR Reviewer - Main Azure Functions Entry Point
 This module defines the Azure Functions HTTP triggers and orchestrates
 the PR review workflow.
 
-Version: 2.4.0 - Added timeout handling, dry-run mode, improved error logging
+Version: 2.5.0 - Timer retry logic, centralized version, concurrency limiting
 """
 import azure.functions as func
 import logging
@@ -19,7 +19,7 @@ from typing import Optional, Any, Dict, List
 import structlog
 
 from src.handlers.pr_webhook import PRWebhookHandler
-from src.utils.config import get_settings, cleanup_secret_manager
+from src.utils.config import get_settings, cleanup_secret_manager, __version__
 from src.utils.logging import setup_logging
 from src.models.pr_event import PREvent
 from src.utils.table_storage import cleanup_table_storage
@@ -333,73 +333,130 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
 async def feedback_collector_trigger(timer: func.TimerRequest) -> None:
     """
     Timer trigger that runs hourly to collect feedback from PR threads.
-    
+
     This function monitors Azure DevOps PR threads for developer feedback
     (resolved, won't fix, thumbs up/down) and stores it for learning.
-    
+
+    Includes retry logic for transient failures (v2.5.0).
+
     Args:
         timer: Timer trigger context
     """
+    settings = get_settings()
+    max_retries = settings.TIMER_MAX_RETRIES
+    retry_delay = settings.TIMER_RETRY_DELAY_SECONDS
+
     logger.info(
         "feedback_collection_started",
         past_due=timer.past_due,
-        schedule_status=timer.schedule_status
+        schedule_status=timer.schedule_status,
+        max_retries=max_retries
     )
-    
-    try:
-        from src.services.feedback_tracker import FeedbackTracker
 
-        # Use context manager for proper resource cleanup
-        async with FeedbackTracker() as tracker:
-            # Collect feedback from PRs in last 24 hours
-            feedback_count = await tracker.collect_recent_feedback(hours=24)
-        
-        logger.info(
-            "feedback_collection_completed",
-            feedback_entries=feedback_count
-        )
-        
-    except Exception as e:
-        logger.exception(
-            "feedback_collection_failed",
-            error=str(e),
-            error_type=type(e).__name__
-        )
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            from src.services.feedback_tracker import FeedbackTracker
+
+            # Use context manager for proper resource cleanup
+            async with FeedbackTracker() as tracker:
+                # Collect feedback from PRs in last 24 hours
+                feedback_count = await tracker.collect_recent_feedback(hours=24)
+
+            logger.info(
+                "feedback_collection_completed",
+                feedback_entries=feedback_count,
+                attempt=attempt + 1
+            )
+            return  # Success - exit function
+
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "feedback_collection_attempt_failed",
+                attempt=attempt + 1,
+                max_retries=max_retries,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+
+            # Don't retry on final attempt
+            if attempt < max_retries:
+                await asyncio.sleep(retry_delay)
+
+    # All retries exhausted
+    logger.exception(
+        "feedback_collection_failed_all_retries",
+        error=str(last_error),
+        error_type=type(last_error).__name__,
+        attempts=max_retries + 1
+    )
 
 
 @app.timer_trigger(schedule="0 0 2 * * *", arg_name="timer", run_on_startup=False)
 async def pattern_detector_trigger(timer: func.TimerRequest) -> None:
     """
     Timer trigger that runs daily at 2 AM to analyze patterns.
-    
+
     This function analyzes historical review data to identify recurring
     issues, problematic files, and architectural patterns.
-    
+
+    Includes retry logic for transient failures (v2.5.0).
+
     Args:
         timer: Timer trigger context
     """
-    logger.info("pattern_detection_started", past_due=timer.past_due)
-    
-    try:
-        from src.services.pattern_detector import PatternDetector
-        
-        detector = PatternDetector()
-        
-        # Analyze patterns for all active repositories
-        patterns = await detector.analyze_all_repositories(days=30)
-        
-        logger.info(
-            "pattern_detection_completed",
-            patterns_found=len(patterns),
-            repositories_analyzed=len(patterns)
-        )
-        
-    except Exception as e:
-        logger.exception(
-            "pattern_detection_failed",
-            error=str(e),
-            error_type=type(e).__name__
-        )
+    settings = get_settings()
+    max_retries = settings.TIMER_MAX_RETRIES
+    retry_delay = settings.TIMER_RETRY_DELAY_SECONDS
+
+    logger.info(
+        "pattern_detection_started",
+        past_due=timer.past_due,
+        max_retries=max_retries
+    )
+
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            from src.services.pattern_detector import PatternDetector
+
+            # Use context manager for proper resource cleanup (v2.5.0)
+            async with PatternDetector() as detector:
+                # Analyze patterns for all active repositories
+                patterns = await detector.analyze_all_repositories(days=30)
+
+            logger.info(
+                "pattern_detection_completed",
+                patterns_found=len(patterns),
+                repositories_analyzed=len(patterns),
+                attempt=attempt + 1
+            )
+            return  # Success - exit function
+
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "pattern_detection_attempt_failed",
+                attempt=attempt + 1,
+                max_retries=max_retries,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+
+            # Don't retry on final attempt
+            if attempt < max_retries:
+                await asyncio.sleep(retry_delay)
+
+    # All retries exhausted
+    logger.exception(
+        "pattern_detection_failed_all_retries",
+        error=str(last_error),
+        error_type=type(last_error).__name__,
+        attempts=max_retries + 1
+    )
 
 
 @app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
@@ -415,7 +472,7 @@ async def health_check(req: func.HttpRequest) -> func.HttpResponse:
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "2.4.0"
+        "version": __version__  # Use centralized version from config
     }
     
     # Check dependencies
@@ -508,6 +565,86 @@ async def reliability_health_check(req: func.HttpRequest) -> func.HttpResponse:
 
         return func.HttpResponse(
             json.dumps(error_response),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+
+@app.route(route="circuit-breaker-admin", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+async def circuit_breaker_admin(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Circuit breaker admin endpoint for managing circuit breaker states.
+
+    Actions (v2.5.0):
+    - GET: Return current status of all circuit breakers
+    - POST with action=reset: Reset all circuit breakers
+    - POST with action=reset&service=openai: Reset specific circuit breaker
+
+    Requires function-level authentication for security.
+
+    Query parameters:
+    - action: 'reset' to reset circuit breakers
+    - service: specific service to reset (optional, e.g., 'openai', 'azure_devops')
+
+    Returns:
+        HTTP 200 with result of operation
+    """
+    from src.services.circuit_breaker import CircuitBreakerManager
+
+    try:
+        action = req.params.get('action')
+        service = req.params.get('service')
+
+        if action == 'reset':
+            if service:
+                # Reset specific service
+                breaker = await CircuitBreakerManager.get_breaker(service)
+                await breaker.reset()
+                logger.info("circuit_breaker_reset_single", service=service)
+                return func.HttpResponse(
+                    json.dumps({
+                        "status": "success",
+                        "action": "reset",
+                        "service": service,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }),
+                    status_code=200,
+                    mimetype="application/json"
+                )
+            else:
+                # Reset all circuit breakers
+                await CircuitBreakerManager.reset_all()
+                logger.info("circuit_breaker_reset_all")
+                return func.HttpResponse(
+                    json.dumps({
+                        "status": "success",
+                        "action": "reset_all",
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }),
+                    status_code=200,
+                    mimetype="application/json"
+                )
+
+        # Default: return status of all circuit breakers
+        states = await CircuitBreakerManager.get_all_states()
+        return func.HttpResponse(
+            json.dumps({
+                "status": "success",
+                "circuit_breakers": states,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        logger.exception("circuit_breaker_admin_failed", error=str(e))
+        return func.HttpResponse(
+            json.dumps({
+                "status": "error",
+                "error": str(e),
+                "error_type": type(e).__name__
+            }),
             status_code=500,
             mimetype="application/json"
         )

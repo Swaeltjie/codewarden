@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.3.0
+Version: 2.5.0 - Removed deprecated sync session property
 """
 import aiohttp
 import asyncio
@@ -168,19 +168,13 @@ class AzureDevOpsClient:
 
         return self._session
 
-    @property
-    def session(self) -> aiohttp.ClientSession:
-        """
-        Synchronous property for backward compatibility.
-        Note: This should be deprecated in favor of _get_session().
-        """
-        if self._session is None or self._session.closed:
-            # This is a fallback - callers should use async _get_session()
-            raise RuntimeError(
-                "Session not initialized. Use 'await client._get_session()' instead of 'client.session'"
-            )
-        return self._session
-    
+    # REMOVED in v2.5.0: Deprecated sync `session` property
+    # All callers should use `await _get_session()` instead
+    # The property was removed because:
+    # 1. It could not reliably guarantee a valid session
+    # 2. Synchronous access to an async resource is error-prone
+    # 3. All production code now uses _get_session()
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),

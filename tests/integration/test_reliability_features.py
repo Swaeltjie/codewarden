@@ -411,5 +411,4 @@ class TestEndToEndReliabilityFlow:
         # Verify idempotency is checked
         assert mock_idempotency.is_duplicate_request.call_count == 0  # Not called yet
         # Would need to actually call handler.handle_pr_event(pr_event) to test fully
-```
 

@@ -12,10 +12,10 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.4.0 - Added dry-run mode, configurable cache TTL, improved timeout handling
+Version: 2.5.0 - Fixed error context in parallel ops, added concurrency limiting
 """
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from datetime import datetime, timezone
 import structlog
 
@@ -50,6 +50,9 @@ class PRWebhookHandler:
         self.idempotency_checker = IdempotencyChecker()
         self.response_cache = ResponseCache()  # Uses configurable TTL from settings
         self.dry_run = False  # When True, skips posting comments to Azure DevOps
+
+        # Concurrency limiter for parallel operations (v2.5.0)
+        self._review_semaphore = asyncio.Semaphore(self.settings.MAX_CONCURRENT_REVIEWS)
 
     async def __aenter__(self):
         """Async context manager entry - initialize resources."""
@@ -245,44 +248,62 @@ class PRWebhookHandler:
     ) -> List[FileChange]:
         """
         Fetch changed files and filter for IaC files only.
-        
+
+        Uses semaphore-limited parallel fetching to prevent overwhelming
+        Azure DevOps API while maintaining efficiency.
+
         Args:
             pr_event: PR event
             pr_details: PR details from DevOps
-            
+
         Returns:
             List of FileChange objects (IaC files only)
         """
         all_files = pr_details.get('files', [])
-        
-        # Fetch diffs in parallel for efficiency
-        tasks = [
-            self.devops_client.get_file_diff(
-                repository_id=pr_event.repository_id,
-                file_path=file['path'],
-                source_commit=pr_event.source_branch,
-                target_commit=pr_event.target_branch
-            )
-            for file in all_files
-        ]
-        
-        diffs = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
+        async def fetch_with_context(file_info: dict) -> Tuple[dict, str, Optional[Exception]]:
+            """
+            Fetch diff with error context preserved.
+
+            Returns tuple of (file_info, diff_content, error) to preserve context.
+            """
+            async with self._review_semaphore:
+                try:
+                    diff = await self.devops_client.get_file_diff(
+                        repository_id=pr_event.repository_id,
+                        file_path=file_info['path'],
+                        source_commit=pr_event.source_branch,
+                        target_commit=pr_event.target_branch
+                    )
+                    return (file_info, diff, None)
+                except Exception as e:
+                    # Preserve error with context
+                    return (file_info, "", e)
+
+        # Fetch diffs in parallel with concurrency limiting
+        results = await asyncio.gather(
+            *[fetch_with_context(file) for file in all_files]
+        )
+
         # Build FileChange objects and filter for IaC
         changed_files = []
-        for file_info, diff_result in zip(all_files, diffs):
-            # Skip if diff fetch failed
-            if isinstance(diff_result, Exception):
+        error_count = 0
+
+        for file_info, diff_result, error in results:
+            # Log failures with preserved context
+            if error is not None:
+                error_count += 1
                 logger.warning(
                     "diff_fetch_failed",
                     file_path=file_info['path'],
-                    error=str(diff_result)
+                    error=str(error),
+                    error_type=type(error).__name__
                 )
                 continue
-            
+
             # Determine file type
             file_type = self._classify_file_type(file_info['path'])
-            
+
             # Only include IaC files
             if file_type != FileType.UNKNOWN:
                 changed_files.append(FileChange(
@@ -292,7 +313,15 @@ class PRWebhookHandler:
                     lines_added=file_info.get('linesAdded', 0),
                     lines_deleted=file_info.get('linesDeleted', 0)
                 ))
-        
+
+        if error_count > 0:
+            logger.warning(
+                "diff_fetch_partial_failure",
+                total_files=len(all_files),
+                failed_count=error_count,
+                success_count=len(all_files) - error_count
+            )
+
         return changed_files
     
     def _classify_file_type(self, file_path: str) -> FileType:
@@ -467,15 +496,45 @@ class PRWebhookHandler:
         pr_event: PREvent,
         learning_context: dict
     ) -> ReviewResult:
-        """Hierarchical review for large PRs."""
-        
-        # Phase 1: Review each file individually (diff-only) with caching
-        tasks = [
-            self._review_single_file(file, learning_context, repository=pr_event.repository_name)
-            for file in files
-        ]
-        
-        individual_results = await asyncio.gather(*tasks)
+        """Hierarchical review for large PRs with concurrency limiting."""
+
+        async def review_with_semaphore(file: FileChange) -> Tuple[FileChange, ReviewResult, Optional[Exception]]:
+            """Review single file with semaphore and error context preservation."""
+            async with self._review_semaphore:
+                try:
+                    result = await self._review_single_file(
+                        file, learning_context, repository=pr_event.repository_name
+                    )
+                    return (file, result, None)
+                except Exception as e:
+                    logger.warning(
+                        "file_review_failed",
+                        file_path=file.path,
+                        error=str(e),
+                        error_type=type(e).__name__
+                    )
+                    # Return empty result for failed file
+                    return (file, ReviewResult.create_empty(pr_event.pr_id, f"Review failed: {str(e)}"), e)
+
+        # Phase 1: Review each file individually with concurrency limiting
+        results = await asyncio.gather(
+            *[review_with_semaphore(file) for file in files]
+        )
+
+        # Extract individual results, logging any failures
+        individual_results = []
+        failed_count = 0
+        for file, result, error in results:
+            individual_results.append(result)
+            if error is not None:
+                failed_count += 1
+
+        if failed_count > 0:
+            logger.warning(
+                "hierarchical_review_partial_failure",
+                total_files=len(files),
+                failed_count=failed_count
+            )
         
         # Phase 2: Cross-file analysis (only files with issues)
         critical_files = [

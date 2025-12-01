@@ -4,13 +4,14 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.4.0 - Added async context manager for proper resource cleanup
+Version: 2.5.0 - Added metrics/observability support
 """
 import structlog
 import json
 from typing import List, Dict, Tuple
 from datetime import datetime, timezone, timedelta
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 
 from src.utils.table_storage import (
     get_table_client,
@@ -23,6 +24,43 @@ from src.utils.config import get_settings
 logger = structlog.get_logger(__name__)
 
 
+@dataclass
+class PatternDetectorMetrics:
+    """
+    Metrics for pattern detection operations (v2.5.0).
+
+    Enables observability for:
+    - Analysis duration
+    - Repository coverage
+    - Pattern detection rates
+    """
+    analysis_started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    analysis_completed_at: datetime = None
+    repositories_analyzed: int = 0
+    reviews_processed: int = 0
+    patterns_found: int = 0
+    errors_count: int = 0
+
+    @property
+    def duration_seconds(self) -> float:
+        """Calculate analysis duration."""
+        if self.analysis_completed_at:
+            return (self.analysis_completed_at - self.analysis_started_at).total_seconds()
+        return 0.0
+
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for logging/metrics."""
+        return {
+            "analysis_started_at": self.analysis_started_at.isoformat(),
+            "analysis_completed_at": self.analysis_completed_at.isoformat() if self.analysis_completed_at else None,
+            "duration_seconds": self.duration_seconds,
+            "repositories_analyzed": self.repositories_analyzed,
+            "reviews_processed": self.reviews_processed,
+            "patterns_found": self.patterns_found,
+            "errors_count": self.errors_count
+        }
+
+
 class PatternDetector:
     """
     Detects patterns in historical review data.
@@ -32,13 +70,20 @@ class PatternDetector:
     - Detects problematic files (frequent issues)
     - Finds architectural anti-patterns
     - Generates monthly pattern reports
+    - Metrics/observability support (v2.5.0)
     """
 
     def __init__(self):
         """Initialize pattern detector."""
         self.settings = get_settings()
         self._closed = False
+        self._last_metrics: PatternDetectorMetrics = None
         logger.info("pattern_detector_initialized")
+
+    @property
+    def last_metrics(self) -> PatternDetectorMetrics:
+        """Get metrics from last analysis run."""
+        return self._last_metrics
 
     async def close(self):
         """Close resources."""
@@ -64,12 +109,17 @@ class PatternDetector:
         - Team-wide anti-patterns
         - Trend analysis
 
+        Includes metrics collection (v2.5.0).
+
         Args:
             days: Number of days of history to analyze
 
         Returns:
             List of pattern dictionaries, one per repository
         """
+        # Initialize metrics for this run
+        metrics = PatternDetectorMetrics()
+
         logger.info("pattern_analysis_started", days=days)
 
         ensure_table_exists('reviewhistory')
@@ -90,6 +140,8 @@ class PatternDetector:
                     logger.warning("pattern_analysis_truncated", max_reviews=10000, days=days)
                     break
 
+            metrics.reviews_processed = len(reviews)
+
             logger.info(
                 "reviews_loaded",
                 count=len(reviews),
@@ -98,6 +150,8 @@ class PatternDetector:
 
             if not reviews:
                 logger.info("no_reviews_found_for_pattern_analysis")
+                metrics.analysis_completed_at = datetime.now(timezone.utc)
+                self._last_metrics = metrics
                 return []
 
             # Group reviews by repository
@@ -117,8 +171,10 @@ class PatternDetector:
                         days
                     )
                     all_patterns.append(patterns)
+                    metrics.repositories_analyzed += 1
 
                 except Exception as e:
+                    metrics.errors_count += 1
                     logger.warning(
                         "repository_pattern_analysis_failed",
                         repository=repository,
@@ -126,20 +182,32 @@ class PatternDetector:
                     )
                     continue
 
+            # Calculate total patterns found
+            metrics.patterns_found = sum(len(p.get('recurring_issues', [])) for p in all_patterns)
+            metrics.analysis_completed_at = datetime.now(timezone.utc)
+            self._last_metrics = metrics
+
             logger.info(
                 "pattern_analysis_completed",
-                repositories_analyzed=len(all_patterns),
-                patterns_found=sum(len(p.get('recurring_issues', [])) for p in all_patterns)
+                repositories_analyzed=metrics.repositories_analyzed,
+                patterns_found=metrics.patterns_found,
+                duration_seconds=metrics.duration_seconds,
+                errors_count=metrics.errors_count
             )
 
             return all_patterns
 
         except Exception as e:
+            metrics.errors_count += 1
+            metrics.analysis_completed_at = datetime.now(timezone.utc)
+            self._last_metrics = metrics
+
             logger.exception(
                 "pattern_analysis_error",
                 days=days,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
+                metrics=metrics.to_dict()
             )
             return []
 

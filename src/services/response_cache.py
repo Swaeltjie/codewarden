@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.4.0 - Configurable TTL, storage rate limiting
+Version: 2.5.0 - Uses Settings.CACHE_TTL_DAYS properly
 """
 import structlog
 import json
@@ -30,14 +30,14 @@ class ResponseCache:
 
     Features:
     - Content-based hashing (same diff = cache hit)
-    - 7-day TTL
+    - Configurable TTL via Settings.CACHE_TTL_DAYS
     - Automatic cache invalidation
     - Cache hit tracking for analytics
     - Cost savings calculation
     - Storage rate limiting (v2.4.0)
     """
 
-    # Default TTL reduced from 7 to 3 days to better align with feedback window
+    # Fallback default TTL (used if settings not available)
     DEFAULT_TTL_DAYS = 3
 
     # Storage rate limiting - max writes per minute
@@ -49,16 +49,17 @@ class ResponseCache:
         Initialize response cache.
 
         Args:
-            ttl_days: Time-to-live in days (default: 3, configurable via CACHE_TTL_DAYS env var)
+            ttl_days: Time-to-live in days (default from Settings.CACHE_TTL_DAYS)
         """
         self.settings = get_settings()
         self.table_name = 'responsecache'
 
-        # Use provided TTL, or check settings, or use default
+        # Use provided TTL, or use settings value, or use default
         if ttl_days is not None:
             self.ttl_days = ttl_days
         else:
-            self.ttl_days = getattr(self.settings, 'CACHE_TTL_DAYS', self.DEFAULT_TTL_DAYS)
+            # Settings.CACHE_TTL_DAYS is now properly defined in Settings class
+            self.ttl_days = self.settings.CACHE_TTL_DAYS
 
         logger.info("response_cache_initialized", ttl_days=self.ttl_days)
 

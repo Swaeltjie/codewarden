@@ -4,7 +4,7 @@ Configuration Management
 
 Handles application settings and Azure Key Vault integration for secrets.
 
-Version: 1.0.0
+Version: 2.5.0 - Added CACHE_TTL_DAYS, MAX_CONCURRENT_REVIEWS settings
 """
 from pydantic_settings import BaseSettings
 from azure.identity import DefaultAzureCredential
@@ -14,6 +14,9 @@ from typing import Optional
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# Application version - single source of truth
+__version__ = "2.5.0"
 
 
 class Settings(BaseSettings):
@@ -28,19 +31,29 @@ class Settings(BaseSettings):
     KEYVAULT_URL: str
     AZURE_STORAGE_ACCOUNT_NAME: str  # For Managed Identity access
     AZURE_DEVOPS_ORG: str
-    
+
     # AI Configuration
     OPENAI_MODEL: str = "gpt-4o"  # Model name or deployment name
     OPENAI_MAX_TOKENS: int = 4000
-    
+
     # Application Configuration
     LOG_LEVEL: str = "INFO"
     ENVIRONMENT: str = "production"
-    
+
     # Azure AI Foundry (Recommended - set these for Azure OpenAI)
     AZURE_AI_ENDPOINT: Optional[str] = None  # e.g., https://your-resource.openai.azure.com
     AZURE_AI_DEPLOYMENT: Optional[str] = None  # Your deployment name (e.g., gpt-4o-review)
-    
+
+    # Cache Configuration (v2.5.0)
+    CACHE_TTL_DAYS: int = 3  # Cache TTL in days (aligned with 24h feedback window)
+
+    # Concurrency Configuration (v2.5.0)
+    MAX_CONCURRENT_REVIEWS: int = 10  # Max parallel file reviews
+
+    # Timer Trigger Retry Configuration (v2.5.0)
+    TIMER_MAX_RETRIES: int = 3  # Max retries for timer trigger failures
+    TIMER_RETRY_DELAY_SECONDS: int = 30  # Delay between retries
+
     class Config:
         env_file = ".env"
         case_sensitive = True

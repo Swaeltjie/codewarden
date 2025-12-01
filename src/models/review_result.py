@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.4.0 - Added SuggestedFix model and file path validation
+Version: 2.5.0 - Added validation to result aggregation
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -273,33 +273,65 @@ class ReviewResult(BaseModel):
     ) -> "ReviewResult":
         """
         Aggregate multiple review results into one.
-        
+
         Used for chunked and hierarchical review strategies.
-        
+
+        Includes validation (v2.5.0):
+        - Filters out invalid/empty results
+        - Validates issue data
+        - Logs aggregation metrics
+
         Args:
             results: List of ReviewResult objects to aggregate
             pr_id: Pull request ID
-            
+
         Returns:
             Aggregated ReviewResult
         """
+        import structlog
+        logger = structlog.get_logger(__name__)
+
         if not results:
             return cls.create_empty(pr_id, "No results to aggregate")
-        
+
+        # Filter out None and validate results (v2.5.0)
+        valid_results = []
+        skipped_count = 0
+
+        for result in results:
+            if result is None:
+                skipped_count += 1
+                continue
+            if not isinstance(result, ReviewResult):
+                logger.warning("aggregate_invalid_result_type", type=type(result).__name__)
+                skipped_count += 1
+                continue
+            valid_results.append(result)
+
+        if skipped_count > 0:
+            logger.warning(
+                "aggregate_skipped_invalid_results",
+                skipped_count=skipped_count,
+                valid_count=len(valid_results)
+            )
+
+        if not valid_results:
+            return cls.create_empty(pr_id, "No valid results to aggregate")
+
         # Collect all issues
         all_issues = []
         total_tokens = 0
         total_cost = 0.0
-        
-        for result in results:
+
+        for result in valid_results:
             all_issues.extend(result.issues)
             total_tokens += result.tokens_used
             total_cost += result.estimated_cost
-        
+
         # Determine overall recommendation
         # Priority: critical issues -> high issues -> any issues -> approve
-        has_critical = any(r.has_critical_issues() for r in results)
-        has_high = any(r.has_high_issues() for r in results)
+        has_critical = any(r.has_critical_issues() for r in valid_results)
+        has_high = any(r.has_high_issues() for r in valid_results)
         
         if has_critical or has_high:
             recommendation = ReviewRecommendation.REQUEST_CHANGES

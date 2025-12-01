@@ -4,7 +4,7 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.0.0 (Production)
+Version: 2.5.0 - Resource cleanup verified, context manager support
 """
 import structlog
 import uuid

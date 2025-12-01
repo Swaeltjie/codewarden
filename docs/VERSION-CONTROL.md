@@ -1,13 +1,68 @@
 # Version Control & Changelog
 
-## Current Version: 2.4.0 (Production Ready)
+## Current Version: 2.5.0 (Production Ready)
 
 **Release Date:** 2025-12-01
-**Status:** ✅ Production Ready (Phase 2 Learning & Developer Experience)
+**Status:** ✅ Production Ready (Reliability & Observability)
 
 ---
 
 ## Version History
+
+### v2.5.0 - Reliability & Observability (2025-12-01)
+
+**Minor Release** - Reliability improvements and observability enhancements
+
+#### ✅ Critical Fixes
+
+**CACHE_TTL_DAYS in Settings:**
+- ✅ Added `CACHE_TTL_DAYS` to Settings class properly
+- ✅ Response cache now uses settings value directly
+- ✅ No more `getattr()` workaround needed
+
+**Error Context in Parallel Operations:**
+- ✅ Custom wrapper functions preserve error context
+- ✅ Partial failures logged with file path and error type
+- ✅ Semaphore-limited concurrency for all parallel ops
+
+**Timer Trigger Retry Logic:**
+- ✅ Configurable retry with `TIMER_MAX_RETRIES=3`
+- ✅ `TIMER_RETRY_DELAY_SECONDS=30` between attempts
+- ✅ Both feedback collector and pattern detector triggers
+
+#### ✅ High Priority
+
+**Deprecated Session Property Removed:**
+- ✅ Removed sync `session` property from AzureDevOpsClient
+- ✅ All callers must use `await _get_session()`
+
+**Centralized Version Management:**
+- ✅ Single source: `src/utils/config.py:__version__`
+- ✅ All modules and endpoints use centralized version
+
+#### ✅ Medium Priority
+
+**Circuit Breaker Admin Endpoint:**
+- ✅ New `/api/circuit-breaker-admin` POST endpoint
+- ✅ Reset all or specific circuit breakers
+- ✅ Get current status of all breakers
+
+**PatternDetector Metrics:**
+- ✅ `PatternDetectorMetrics` dataclass for observability
+- ✅ Tracks duration, repositories, patterns, errors
+- ✅ `last_metrics` property for access
+
+**Concurrency Limiting:**
+- ✅ `MAX_CONCURRENT_REVIEWS=10` setting
+- ✅ Semaphore applied to diff fetching and reviews
+- ✅ Prevents overwhelming external APIs
+
+**Result Aggregation Validation:**
+- ✅ Filters None values before aggregation
+- ✅ Type checking for ReviewResult instances
+- ✅ Logs skipped invalid results
+
+---
 
 ### v2.4.0 - Phase 2 Learning & Developer Experience (2025-12-01)
 
@@ -316,24 +371,24 @@ We use Semantic Versioning (SemVer): `MAJOR.MINOR.PATCH`
 
 | Component | Version | Status | Notes |
 |-----------|---------|--------|-------|
-| function_app.py | 2.0.0 | ✅ Ready | Main entry point |
-| azure_devops.py | 1.0.0 | ✅ Ready | DevOps API client |
+| function_app.py | 2.5.0 | ✅ Ready | Main entry point |
+| azure_devops.py | 2.5.0 | ✅ Ready | DevOps API client |
 | ai_client.py | 1.0.0 | ✅ Ready | OpenAI integration |
 | diff_parser.py | 1.0.0 | ✅ Ready | Git diff parsing |
-| pr_webhook.py | 2.0.0 | ✅ Ready | Webhook handler |
+| pr_webhook.py | 2.5.0 | ✅ Ready | Webhook handler |
 
 ### Models
 
 | Component | Version | Status | Notes |
 |-----------|---------|--------|-------|
 | pr_event.py | 1.0.0 | ✅ Ready | PR event models |
-| review_result.py | 1.0.0 | ✅ Ready | Review result models |
+| review_result.py | 2.5.0 | ✅ Ready | Review result models |
 
 ### Utilities
 
 | Component | Version | Status | Notes |
 |-----------|---------|--------|-------|
-| config.py | 1.0.0 | ✅ Ready | Configuration |
+| config.py | 2.5.0 | ✅ Ready | Configuration & version |
 | logging.py | 1.0.0 | ✅ Ready | Logging setup |
 | table_storage.py | 1.0.0 | ✅ Ready | Table Storage |
 
@@ -344,8 +399,10 @@ We use Semantic Versioning (SemVer): `MAJOR.MINOR.PATCH`
 | context_manager.py | 1.0.0 | ✅ Ready | Strategy selection |
 | comment_formatter.py | 1.0.0 | ✅ Ready | Markdown formatting |
 | prompts/factory.py | 1.0.0 | ✅ Ready | Prompt generation |
-| feedback_tracker.py | 2.1.0 | ✅ Production | Feedback tracking & learning |
-| pattern_detector.py | 2.1.0 | ✅ Production | Pattern analysis & insights |
+| feedback_tracker.py | 2.5.0 | ✅ Production | Feedback tracking & learning |
+| pattern_detector.py | 2.5.0 | ✅ Production | Pattern analysis with metrics |
+| circuit_breaker.py | 2.5.0 | ✅ Production | Circuit breaker with admin endpoint |
+| response_cache.py | 2.5.0 | ✅ Production | Response caching |
 
 ### Documentation
 

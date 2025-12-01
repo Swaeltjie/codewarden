@@ -5,6 +5,91 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2025-12-01
+
+### Added - Reliability & Observability Improvements
+
+- **Centralized Version Management**
+  - Single source of truth: `src/utils/config.py:__version__`
+  - All modules and endpoints use centralized version
+  - Eliminates version inconsistencies across codebase
+
+- **Timer Trigger Retry Logic**
+  - Configurable retry with exponential backoff
+  - `TIMER_MAX_RETRIES=3` and `TIMER_RETRY_DELAY_SECONDS=30`
+  - Applied to both feedback collector and pattern detector triggers
+  - Proper error logging with attempt counts
+
+- **Concurrency Limiting**
+  - Semaphore-based concurrency control for parallel operations
+  - `MAX_CONCURRENT_REVIEWS=10` setting to prevent resource exhaustion
+  - Applied to diff fetching and hierarchical reviews
+  - Prevents overwhelming Azure DevOps API
+
+- **Circuit Breaker Admin Endpoint**
+  - New `/api/circuit-breaker-admin` endpoint
+  - Reset all circuit breakers: `POST ?action=reset`
+  - Reset specific service: `POST ?action=reset&service=openai`
+  - Get status: `POST` (no action parameter)
+
+- **PatternDetector Metrics**
+  - `PatternDetectorMetrics` dataclass for observability
+  - Tracks: duration, repositories analyzed, patterns found, errors
+  - `last_metrics` property for accessing most recent analysis metrics
+  - Detailed logging with metrics in analysis completion
+
+- **Result Aggregation Validation**
+  - Validates results before aggregation (filters None values)
+  - Type checking for ReviewResult instances
+  - Logs skipped invalid results with counts
+
+### Fixed - Critical Issues
+
+- **CACHE_TTL_DAYS in Settings**
+  - Added `CACHE_TTL_DAYS` to Settings class properly
+  - Response cache now uses settings value directly
+  - No more fallback to `getattr()` workaround
+
+- **Error Context in Parallel Operations**
+  - `asyncio.gather()` with `return_exceptions=True` replaced
+  - Custom wrapper functions preserve error context (file_path, error_type)
+  - Partial failures logged with counts
+  - Each failed operation tracked individually
+
+- **Deprecated Session Property Removed**
+  - Removed sync `session` property from AzureDevOpsClient
+  - All callers must use `await _get_session()`
+  - Eliminates error-prone synchronous access pattern
+
+### Changed
+
+- **Settings Class**
+  - Added `CACHE_TTL_DAYS: int = 3`
+  - Added `MAX_CONCURRENT_REVIEWS: int = 10`
+  - Added `TIMER_MAX_RETRIES: int = 3`
+  - Added `TIMER_RETRY_DELAY_SECONDS: int = 30`
+
+- **Parallel Operations**
+  - `_fetch_changed_files()` uses semaphore-limited fetching
+  - `_hierarchical_review()` uses semaphore for file reviews
+  - Both preserve error context with tuple returns
+
+### Technical Details
+
+- **Version**: `from src.utils.config import __version__` for all version references
+- **Concurrency**: `asyncio.Semaphore(settings.MAX_CONCURRENT_REVIEWS)`
+- **Retry**: For loop with `asyncio.sleep(retry_delay)` between attempts
+- **Metrics**: `@dataclass` with `to_dict()` for structured logging
+
+### Migration Notes
+
+- No breaking changes - fully backward compatible with v2.4.0
+- Set `MAX_CONCURRENT_REVIEWS` to tune parallel operation limits
+- Set `TIMER_MAX_RETRIES` and `TIMER_RETRY_DELAY_SECONDS` for timer behavior
+- Circuit breaker admin endpoint requires function key authentication
+
+---
+
 ## [2.4.0] - 2025-12-01
 
 ### Added - Phase 2 Learning & Developer Experience

@@ -4,7 +4,7 @@ Circuit Breaker Pattern
 
 Prevents cascading failures when external services are down.
 
-Version: 2.3.0
+Version: 2.5.0 - Added admin endpoint support
 """
 import structlog
 from typing import Callable, Any, Optional, Dict
