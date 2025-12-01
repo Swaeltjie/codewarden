@@ -29,7 +29,7 @@ class ReviewIssue(BaseModel):
     
     severity: IssueSeverity = Field(..., description="Issue severity level")
     file_path: str = Field(..., description="Path to file with issue")
-    line_number: int = Field(ge=0, description="Line number (0 if file-level)")
+    line_number: int = Field(ge=0, le=1000000, description="Line number (0 if file-level)")
     issue_type: str = Field(..., description="Type of issue (e.g., PublicEndpoint, HardcodedSecret)")
     message: str = Field(..., description="Human-readable issue description")
     suggestion: Optional[str] = Field(None, description="Suggested fix or remediation")
@@ -65,7 +65,7 @@ class ReviewResult(BaseModel):
         default_factory=lambda: str(uuid.uuid4()),
         description="Unique review ID"
     )
-    pr_id: int = Field(..., description="Pull request ID")
+    pr_id: int = Field(..., gt=0, description="Pull request ID")
     issues: List[ReviewIssue] = Field(
         default_factory=list,
         description="List of issues found"

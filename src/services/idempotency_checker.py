@@ -99,8 +99,17 @@ class IdempotencyChecker:
 
                 return True, entity.get('result_summary', 'unknown')
 
-            except Exception as e:
+            except (LookupError, KeyError) as e:
                 # Entity not found - this is a new request
+                logger.debug(
+                    "new_request_detected",
+                    pr_id=pr_id,
+                    repository=repository,
+                    request_id=request_id
+                )
+                return False, None
+            except Exception as e:
+                # Check for Azure-specific not found errors
                 if "ResourceNotFound" in str(type(e).__name__) or "not found" in str(e).lower():
                     logger.debug(
                         "new_request_detected",
@@ -110,7 +119,7 @@ class IdempotencyChecker:
                     )
                     return False, None
                 else:
-                    # Unexpected error - log but don't block processing
+                    # Unexpected error - log but don't block processing (fail open)
                     logger.warning(
                         "idempotency_check_failed",
                         pr_id=pr_id,
@@ -279,7 +288,7 @@ class IdempotencyChecker:
                 if entity.get('processing_count', 1) > 1:
                     duplicate_requests += 1
 
-            duplicate_rate = (duplicate_requests / total_requests * 100) if total_requests > 0 else 0
+            duplicate_rate = (duplicate_requests / total_requests * 100.0) if total_requests > 0 else 0.0
 
             return {
                 "total_requests": total_requests,

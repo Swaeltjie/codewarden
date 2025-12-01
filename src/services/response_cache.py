@@ -407,9 +407,10 @@ class ResponseCache:
 
             # Cache reuse statistics
             # Note: hit_count starts at 1 for initial store, so actual cache hits = hit_count - 1
-            cache_hits = total_hits - total_entries  # Subtract initial stores
-            avg_reuse_per_entry = (cache_hits / total_entries) if total_entries > 0 else 0
-            cache_efficiency_percent = (reused_entries / total_entries * 100) if total_entries > 0 else 0
+            # Prevent negative values from edge cases
+            cache_hits = max(0, total_hits - total_entries)  # Subtract initial stores, ensure non-negative
+            avg_reuse_per_entry = (cache_hits / total_entries) if total_entries > 0 else 0.0
+            cache_efficiency_percent = (reused_entries / total_entries * 100.0) if total_entries > 0 else 0.0
 
             return {
                 "repository": repository or "all",

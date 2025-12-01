@@ -608,23 +608,38 @@ class AzureDevOpsClient:
     ) -> Dict:
         """
         Post a summary comment thread to PR.
-        
+
         Args:
             project_id: Project UUID or name
             repository_id: Repository UUID
             pr_id: Pull request ID
             comment: Comment text (markdown supported)
             thread_type: Type of thread (summary, discussion)
-            
+
         Returns:
             Created thread object
+
+        Raises:
+            ValueError: If comment exceeds max length (64KB for Azure DevOps API)
         """
+        # Azure DevOps has a 64KB limit on comment content
+        MAX_COMMENT_LENGTH = 65536
+        if len(comment) > MAX_COMMENT_LENGTH:
+            logger.warning(
+                "comment_too_long",
+                pr_id=pr_id,
+                length=len(comment),
+                max_length=MAX_COMMENT_LENGTH
+            )
+            # Truncate comment with warning
+            comment = comment[:MAX_COMMENT_LENGTH - 100] + "\n\n... (Comment truncated due to length limit)"
+
         url = (
             f"{self.base_url}/{project_id}/_apis/git/repositories/"
             f"{repository_id}/pullRequests/{pr_id}/threads"
             f"?api-version={self.api_version}"
         )
-        
+
         payload = {
             "comments": [
                 {

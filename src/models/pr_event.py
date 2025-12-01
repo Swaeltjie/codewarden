@@ -27,7 +27,7 @@ class PREvent(BaseModel):
     Maps Azure DevOps webhook payload to internal representation.
     """
 
-    pr_id: int = Field(..., description="Pull request ID")
+    pr_id: int = Field(..., gt=0, description="Pull request ID")
     repository_id: str = Field(..., description="Repository UUID")
     repository_name: str = Field(..., description="Repository name")
     project_id: str = Field(..., description="Project UUID or name")

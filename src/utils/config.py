@@ -177,3 +177,17 @@ def get_secret_manager() -> SecretManager:
         _secret_manager_instance = SecretManager()
 
     return _secret_manager_instance
+
+
+def cleanup_secret_manager():
+    """
+    Clean up the global secret manager instance.
+
+    Should be called on application shutdown to prevent resource leaks.
+    """
+    global _secret_manager_instance
+
+    if _secret_manager_instance is not None:
+        _secret_manager_instance.close()
+        _secret_manager_instance = None
+        logger.info("secret_manager_singleton_cleaned_up")

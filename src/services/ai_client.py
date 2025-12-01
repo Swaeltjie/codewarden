@@ -106,7 +106,24 @@ class AIClient:
         """
         model = model or self.settings.OPENAI_MODEL
         max_tokens = max_tokens or self.settings.OPENAI_MAX_TOKENS
-        
+
+        # Validate model parameter
+        if not model or not isinstance(model, str) or not model.strip():
+            logger.error("invalid_model_parameter", model=model)
+            raise ValueError(
+                "Invalid model parameter. Must be a non-empty string. "
+                "Configure OPENAI_MODEL environment variable."
+            )
+
+        # Validate max_tokens
+        if max_tokens <= 0 or max_tokens > 128000:
+            logger.warning(
+                "invalid_max_tokens",
+                max_tokens=max_tokens,
+                using_default=4000
+            )
+            max_tokens = 4000
+
         # For Azure AI Foundry, model parameter is the deployment name
         # For direct OpenAI, it's the model name (e.g., gpt-4o)
         if self.use_azure:
@@ -141,7 +158,6 @@ class AIClient:
             # Define the API call function for circuit breaker
             async def make_api_call():
                 # Add per-request timeout to prevent hanging
-                import asyncio
                 return await asyncio.wait_for(
                     self.client.chat.completions.create(
                         model=model,

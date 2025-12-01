@@ -287,8 +287,8 @@ class DiffParser:
         tokens_full_files = (total_file_lines * 80) // 4
         
         savings_percent = (
-            (tokens_full_files - tokens_with_diff_only) * 100 / tokens_full_files
-            if tokens_full_files > 0 else 0
+            (tokens_full_files - tokens_with_diff_only) * 100.0 / tokens_full_files
+            if tokens_full_files > 0 else 0.0
         )
         
         return {
