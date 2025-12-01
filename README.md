@@ -225,11 +225,19 @@ pre-commit run --all-files
 
 ## 📖 Documentation
 
-- **[Architecture Overview](docs/ARCHITECTURE.md)** - Complete system design, data models, storage decisions
-- **[Deployment Guide](docs/DEPLOYMENT-GUIDE.md)** - Step-by-step Azure deployment
-- **[Managed Identity Setup](docs/MANAGED-IDENTITY-SETUP.md)** - Credential-free authentication guide
-- **[Azure DevOps MI Guide](docs/AZURE-DEVOPS-MANAGED-IDENTITY.md)** - DevOps-specific MI setup
-- **[Datadog Integration](docs/DATADOG-INTEGRATION.md)** - Monitoring and logging setup
+### Core Documentation
+- **[Architecture Overview](docs/ARCHITECTURE.md)** - System design, data models, and storage decisions
+- **[Deployment Guide](docs/DEPLOYMENT-GUIDE.md)** - Complete Azure deployment walkthrough
+- **[Security Architecture](docs/ARCHITECTURE-SECURITY.md)** - Zero-credential architecture and threat model
+
+### Setup Guides
+- **[Managed Identity Setup](docs/MANAGED-IDENTITY-SETUP.md)** - Credential-free authentication
+- **[Azure DevOps MI Guide](docs/AZURE-DEVOPS-MANAGED-IDENTITY.md)** - DevOps-specific MI configuration
+- **[Datadog Integration](docs/DATADOG-INTEGRATION.md)** - Monitoring and observability
+
+### Reference
+- **[Azure Resources](docs/AZURE-RESOURCES.md)** - Complete resource inventory and costs
+- **[Version Control](docs/VERSION-CONTROL.md)** - Changelog and version history
 
 ## 🔒 Security
 

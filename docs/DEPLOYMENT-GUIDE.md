@@ -1,4 +1,4 @@
-# Deployment Guide: Python Azure Functions
+# Deployment Guide
 
 ## Prerequisites
 
@@ -8,6 +8,8 @@
 - Git
 - Datadog account (optional, for monitoring)
 
+---
+
 ## Local Development Setup
 
 ### 1. Clone and Install
@@ -15,11 +17,11 @@
 ```bash
 # Clone repository
 git clone <your-repo>
-cd ai-pr-reviewer
+cd codewarden
 
 # Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -31,15 +33,14 @@ pre-commit install
 
 ### 2. Local Configuration
 
-**Authentication**: Login to Azure CLI first (uses Managed Identity locally):
+**Authentication:** Login to Azure CLI (uses Managed Identity locally):
 
 ```bash
-# Login to Azure - this enables DefaultAzureCredential
 az login
 az account set --subscription <your-subscription-id>
 ```
 
-Create `.env` file:
+**Create `.env` file:**
 ```bash
 # .env (local development only - DO NOT COMMIT)
 
@@ -55,13 +56,9 @@ OPENAI_MAX_TOKENS=4000
 # Application
 LOG_LEVEL=DEBUG
 ENVIRONMENT=development
-
-# Optional: Azure OpenAI (if using Azure instead of OpenAI)
-AZURE_AI_ENDPOINT=https://your-resource.openai.azure.com
-AZURE_AI_DEPLOYMENT=gpt-4o-review
 ```
 
-**Note**: Secrets (API keys, webhook secrets) are stored in Key Vault and accessed via Managed Identity. No credentials in `.env` file!
+**Note:** Secrets (API keys, webhook secrets) are stored in Key Vault and accessed via Managed Identity. No credentials in `.env`!
 
 ### 3. Run Locally
 
@@ -69,37 +66,20 @@ AZURE_AI_DEPLOYMENT=gpt-4o-review
 # Start Azure Functions runtime
 func start
 
-# The function will be available at:
+# Available endpoints:
 # http://localhost:7071/api/pr-webhook
 # http://localhost:7071/api/health
 ```
 
-### 4. Run Tests
+### 4. Run Tests & Code Quality
 
 ```bash
-# Run all tests
-pytest
-
-# Run with coverage
+# Run all tests with coverage
 pytest --cov=src --cov-report=html
 
-# Run specific test file
-pytest tests/unit/test_diff_parser.py
-
-# Run integration tests only
-pytest tests/integration/
-```
-
-### 5. Code Quality Checks
-
-```bash
-# Format code
+# Format and lint
 black src/
-
-# Lint and auto-fix
 ruff check src/ --fix
-
-# Type checking
 mypy src/
 
 # Security scan
@@ -128,11 +108,9 @@ STORAGE_ACCOUNT="staiprreviewer"
 KEYVAULT_NAME="kv-ai-pr-reviewer"
 
 # Create resource group
-az group create \
-  --name $RESOURCE_GROUP \
-  --location $LOCATION
+az group create --name $RESOURCE_GROUP --location $LOCATION
 
-# Create storage account (used for both Functions AND data storage)
+# Create storage account
 az storage account create \
   --name $STORAGE_ACCOUNT \
   --location $LOCATION \
@@ -140,14 +118,9 @@ az storage account create \
   --sku Standard_LRS \
   --kind StorageV2
 
-# Create Table Storage tables for Phase 2 features
-az storage table create \
-  --name feedback \
-  --account-name $STORAGE_ACCOUNT
-
-az storage table create \
-  --name reviewhistory \
-  --account-name $STORAGE_ACCOUNT
+# Create Table Storage tables
+az storage table create --name feedback --account-name $STORAGE_ACCOUNT
+az storage table create --name reviewhistory --account-name $STORAGE_ACCOUNT
 
 # Create Function App (Python 3.12, Consumption plan)
 az functionapp create \
@@ -166,55 +139,6 @@ az keyvault create \
   --resource-group $RESOURCE_GROUP \
   --location $LOCATION
 ```
-
-### Why Azure Table Storage Instead of Cosmos DB?
-
-**We use Azure Table Storage for Phase 2 features** (feedback tracking, pattern detection):
-
-**Cost Comparison:**
-| Storage | Monthly Cost (1,000 entries) |
-|---------|------------------------------|
-| Table Storage | ~$0.10 ✅ |
-| Cosmos DB Serverless | ~$1-2 |
-| Cosmos DB Provisioned | ~$25+ |
-
-**Table Storage Advantages:**
-- ✅ **10-20x cheaper** than Cosmos DB
-- ✅ Simple key-value access (perfect for our use case)
-- ✅ Part of existing Storage Account (no additional resource)
-- ✅ Fast (sub-100ms queries)
-- ✅ Reliable (99.9% SLA)
-
-**When to Use Cosmos DB Instead:**
-- Need global distribution (multi-region)
-- Complex query patterns (SQL, GraphQL)
-- Auto-scaling to massive scale (millions of requests/day)
-- Multi-model data (documents, graphs, key-value)
-
-**Our Access Patterns:**
-```python
-# Simple key-value lookups - perfect for Table Storage
-feedback = table_client.get_entity(
-    partition_key=repository_name,
-    row_key=feedback_id
-)
-
-# Simple queries - also perfect for Table Storage
-recent_feedback = table_client.query_entities(
-    f"PartitionKey eq '{repository_name}' and Timestamp gt datetime'{start_date}'"
-)
-```
-
-**Migration Path:**
-If you later need Cosmos DB features, migration is straightforward:
-```bash
-# Azure provides built-in Table Storage → Cosmos DB migration
-az cosmosdb table migrate --help
-```
-
-**Recommendation:** Start with Table Storage. You can always upgrade to Cosmos DB if you need global scale.
-
----
 
 ### 2. Enable Managed Identity
 
@@ -236,7 +160,7 @@ az keyvault set-policy \
   --object-id $PRINCIPAL_ID \
   --secret-permissions get list
 
-# Grant Table Storage access (Storage Table Data Contributor role)
+# Grant Table Storage access
 az role assignment create \
   --assignee $PRINCIPAL_ID \
   --role "Storage Table Data Contributor" \
@@ -279,10 +203,7 @@ az functionapp config appsettings set \
     ENVIRONMENT=production
 ```
 
-**Note on Monitoring:**  
-- Application Insights is NOT configured (you're using Datadog)
-- See [Datadog Integration Guide](DATADOG-INTEGRATION.md) for logging setup
-- Datadog will collect logs via its Azure integration or agent
+**Note:** Application Insights is NOT configured (you're using Datadog). See [DATADOG-INTEGRATION.md](DATADOG-INTEGRATION.md) for logging setup.
 
 ### 5. Deploy Function Code
 
@@ -290,11 +211,11 @@ az functionapp config appsettings set \
 # Deploy using Azure Functions Core Tools
 func azure functionapp publish $FUNCTION_APP --python
 
-# Or deploy using Azure CLI
+# Or deploy using Azure CLI with zip
 az functionapp deployment source config-zip \
   --name $FUNCTION_APP \
   --resource-group $RESOURCE_GROUP \
-  --src ai-pr-reviewer.zip
+  --src codewarden.zip
 ```
 
 ### 6. Get Function URL
@@ -321,7 +242,7 @@ echo "Webhook URL: ${FUNCTION_URL}?code=${FUNCTION_KEY}"
 
 ### 1. Add Managed Identity to Azure DevOps
 
-Follow the detailed setup in `docs/AZURE-DEVOPS-MANAGED-IDENTITY.md`:
+Follow the detailed setup in [AZURE-DEVOPS-MANAGED-IDENTITY.md](AZURE-DEVOPS-MANAGED-IDENTITY.md):
 
 1. Get Managed Identity Object ID from Function App
 2. Add MI to Azure DevOps organization (Basic license)
@@ -350,43 +271,25 @@ Follow the detailed setup in `docs/AZURE-DEVOPS-MANAGED-IDENTITY.md`:
 
 ## Monitoring & Troubleshooting
 
-### View Logs (Azure Portal)
+### View Logs
 
 ```bash
 # Stream live logs from Azure
 func azure functionapp logstream $FUNCTION_APP
 
 # Or use Azure CLI
-az webapp log tail \
-  --name $FUNCTION_APP \
-  --resource-group $RESOURCE_GROUP
+az webapp log tail --name $FUNCTION_APP --resource-group $RESOURCE_GROUP
 ```
 
 ### Datadog Integration (Recommended)
 
-**See [Datadog Integration Guide](DATADOG-INTEGRATION.md) for complete setup.**
+See [DATADOG-INTEGRATION.md](DATADOG-INTEGRATION.md) for complete setup.
 
-Quick setup:
+**Quick setup:**
 1. Install Datadog Azure integration
-2. Configure log forwarding from Azure Functions
+2. Configure log forwarding
 3. Set up custom metrics and dashboards
 4. Create alerts for failures
-
-**Example Datadog Queries:**
-
-```
-# Recent function executions
-source:azure.functions service:ai-pr-reviewer status:ok
-| top 100 by @timestamp desc
-
-# Errors in last 24 hours  
-source:azure.functions service:ai-pr-reviewer status:error
-| timeseries count() by error.type
-
-# PR review metrics
-metric:custom.pr_review_duration 
-| avg by env, repository
-```
 
 ### Health Check
 
@@ -413,23 +316,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
-      
+
       - name: Run tests
         run: pytest
-      
+
       - name: Run linting
         run: ruff check src/
-      
+
       - name: Type checking
         run: mypy src/
 
@@ -438,17 +341,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      
+
       - name: Login to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-      
+
       - name: Deploy to Azure Functions
         run: |
           func azure functionapp publish ${{ secrets.FUNCTION_APP_NAME }} --python
@@ -463,10 +366,7 @@ jobs:
 - [x] Function key required for HTTP trigger
 - [x] Webhook secret validation
 - [x] HTTPS only
-- [x] Application Insights enabled
-- [x] Resource locks on production resources
 - [x] RBAC permissions (principle of least privilege)
-- [x] Network isolation (optional: VNet integration)
 
 ---
 
@@ -480,71 +380,30 @@ jobs:
 
 ### Estimated Monthly Costs (100 PRs/month)
 
-| Resource | Monthly Cost | Verified (API) |
-|----------|--------------|----------------|
-| Function App (Consumption) | ~$0.10 | $0.00 (free tier) |
-| Storage Account (Functions + Data) | ~$0.50 | $0.00 (minimal) |
-| Table Storage (Feedback + History) | ~$0.10 | $0.00 (minimal) |
-| Key Vault | ~$0.30 | $0.00 (free tier) |
-| OpenAI API (with diff-only) | ~$8.00 | ~$8.00 ✅ |
-| Datadog | $0 (existing infrastructure) | $0 |
-| **Total** | **~$9/month** | **~$8/month** |
-
-**Actual Cost Breakdown (verified via Azure Pricing API):**
-- Azure infrastructure: **~$0/month** (all within free tiers for low volume)
-- OpenAI API: **~$8/month** (100 PRs × ~1,200 tokens/review)
-- **Real-world total: ~$8/month** for 100 PRs
-
-**Savings vs alternatives:**
-- Using existing Datadog vs new App Insights: **Saved $2-5/month**
-- Using Table Storage instead of Cosmos DB: **Saved $1-2/month**
-- Low volume within Azure free tiers: **Saved ~$1-2/month**
-
-**Verify Pricing Yourself:**
-```bash
-# Run the pricing verification script to get current Azure pricing
-python scripts/verify_azure_pricing.py
-```
-
-This script queries the Azure Retail Prices API to verify current pricing for all Azure services used by CodeWarden.
+| Resource | Monthly Cost |
+|----------|--------------|
+| Function App (Consumption) | $0.10 |
+| Storage Account | $1.00 |
+| Key Vault | $0.50 |
+| OpenAI API (diff-only) | $8.00 |
+| Datadog | $0 (existing) |
+| **TOTAL** | **~$10/month** |
 
 ### Cost-Saving Tips
 
-1. ✅ **Use existing Datadog** instead of Application Insights ($2-5/month saved)
-2. ✅ **Use Table Storage** instead of Cosmos DB ($0.10 vs $1-2/month)
+1. ✅ Use existing Datadog (vs Application Insights: $2-5/month saved)
+2. ✅ Use Table Storage (vs Cosmos DB: $1-2/month saved)
 3. ✅ Use diff-only analysis (88% token savings)
-4. ✅ Cache AI responses (deduplicate similar reviews)
-5. ✅ Use Consumption plan (pay per execution)
-6. ✅ Set budget alerts
-
-### Storage Comparison
-
-| Feature | Table Storage | Cosmos DB Serverless | Cosmos DB Provisioned |
-|---------|---------------|----------------------|-----------------------|
-| **Cost/month** | $0.10 | $1-2 | $25+ |
-| **Use Case** | Simple key-value | Complex queries | Global scale |
-| **Performance** | Sub-100ms | Sub-10ms | Guaranteed throughput |
-| **Scaling** | Auto | Auto | Manual/Auto |
-| **Query Language** | OData | SQL, MongoDB, Gremlin | SQL, MongoDB, Gremlin |
-| **Best For** | Our use case ✅ | Future growth | Enterprise global apps |
+4. ✅ Use Consumption plan (pay per execution)
 
 ---
 
 ## Troubleshooting Common Issues
 
-### Issue: Cold Start Too Slow
+### Cold Start Too Slow
+**Solution:** Use Premium plan (~$150/month) for always-ready instances
 
-```bash
-# Solution: Use Premium plan for always-ready instances
-az functionapp plan create \
-  --resource-group $RESOURCE_GROUP \
-  --name premium-plan \
-  --location $LOCATION \
-  --sku EP1  # ~$150/month but 0 cold start
-```
-
-### Issue: Key Vault Access Denied
-
+### Key Vault Access Denied
 ```bash
 # Verify managed identity has access
 az keyvault show --name $KEYVAULT_NAME --query properties.accessPolicies
@@ -556,12 +415,11 @@ az keyvault set-policy \
   --secret-permissions get list
 ```
 
-### Issue: Function Timeout
-
-```bash
-# Increase timeout in host.json
+### Function Timeout
+**Solution:** Increase timeout in `host.json`:
+```json
 {
-  "functionTimeout": "00:10:00"  # 10 minutes max
+  "functionTimeout": "00:10:00"
 }
 ```
 
@@ -572,8 +430,12 @@ az keyvault set-policy \
 1. ✅ Deploy to Azure
 2. ✅ Configure Azure DevOps webhook
 3. ✅ Test with a sample PR
-4. ✅ Monitor Application Insights
-5. ✅ Add feedback tracking (Phase 2)
-6. ✅ Add historical pattern detection (Phase 2)
+4. ✅ Monitor logs in Datadog
+5. ✅ Set up alerting
 
-**Your Python implementation is production-ready!** 🚀
+**Your CodeWarden deployment is production-ready!** 🚀
+
+For advanced features, see:
+- [MANAGED-IDENTITY-SETUP.md](MANAGED-IDENTITY-SETUP.md) - Complete MI configuration
+- [DATADOG-INTEGRATION.md](DATADOG-INTEGRATION.md) - Advanced monitoring
+- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture details
