@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.3.0
+Version: 2.4.0 - Configurable TTL, storage rate limiting
 """
 import structlog
 import json
@@ -34,19 +34,62 @@ class ResponseCache:
     - Automatic cache invalidation
     - Cache hit tracking for analytics
     - Cost savings calculation
+    - Storage rate limiting (v2.4.0)
     """
 
-    def __init__(self, ttl_days: int = 7):
+    # Default TTL reduced from 7 to 3 days to better align with feedback window
+    DEFAULT_TTL_DAYS = 3
+
+    # Storage rate limiting - max writes per minute
+    MAX_WRITES_PER_MINUTE = 100
+    _write_timestamps: list = []
+
+    def __init__(self, ttl_days: int = None):
         """
         Initialize response cache.
 
         Args:
-            ttl_days: Time-to-live in days (default: 7)
+            ttl_days: Time-to-live in days (default: 3, configurable via CACHE_TTL_DAYS env var)
         """
         self.settings = get_settings()
         self.table_name = 'responsecache'
-        self.ttl_days = ttl_days
-        logger.info("response_cache_initialized", ttl_days=ttl_days)
+
+        # Use provided TTL, or check settings, or use default
+        if ttl_days is not None:
+            self.ttl_days = ttl_days
+        else:
+            self.ttl_days = getattr(self.settings, 'CACHE_TTL_DAYS', self.DEFAULT_TTL_DAYS)
+
+        logger.info("response_cache_initialized", ttl_days=self.ttl_days)
+
+    def _check_write_rate_limit(self) -> bool:
+        """
+        Check if write rate limit is exceeded.
+
+        Returns:
+            True if write is allowed, False if rate limited
+        """
+        now = datetime.now(timezone.utc).timestamp()
+        window_start = now - 60  # 1 minute window
+
+        # Clean old timestamps
+        ResponseCache._write_timestamps = [
+            ts for ts in ResponseCache._write_timestamps
+            if ts > window_start
+        ]
+
+        # Check rate limit
+        if len(ResponseCache._write_timestamps) >= self.MAX_WRITES_PER_MINUTE:
+            logger.warning(
+                "storage_write_rate_limited",
+                writes_in_window=len(ResponseCache._write_timestamps),
+                max_allowed=self.MAX_WRITES_PER_MINUTE
+            )
+            return False
+
+        # Record this write
+        ResponseCache._write_timestamps.append(now)
+        return True
 
     def _is_safe_file_path(self, file_path: str) -> bool:
         """
@@ -241,6 +284,15 @@ class ResponseCache:
             # Validate file path for safety
             if not self._is_safe_file_path(file_path):
                 logger.warning("unsafe_cache_file_path_store", file_path=file_path)
+                return
+
+            # Check storage rate limit
+            if not self._check_write_rate_limit():
+                logger.warning(
+                    "cache_write_skipped_rate_limit",
+                    repository=repository,
+                    file_path=file_path
+                )
                 return
 
             ensure_table_exists(self.table_name)

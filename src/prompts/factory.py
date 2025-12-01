@@ -4,11 +4,14 @@ Prompt Factory for AI Code Reviews
 
 Generates specialized prompts for different file types and review strategies.
 
-Version: 2.3.0 - Added suggested fix generation with code snippets
+Version: 2.4.0 - Implemented Phase 2 learning context integration
 """
-from typing import List, Dict
+from typing import List, Dict, Optional
 from src.models.pr_event import FileChange, FileType
 from src.services.diff_parser import DiffParser
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 class PromptFactory:
@@ -49,12 +52,12 @@ class PromptFactory:
         prompt_parts.append("Review the following Infrastructure as Code changes.")
         prompt_parts.append("")
         
-        # Add learning context if available
+        # Add learning context if available (Phase 2 implementation)
         if learning_context:
-            prompt_parts.append("## Team Preferences")
-            prompt_parts.append("Based on past feedback, focus on:")
-            # TODO: Phase 2 - add specific preferences
-            prompt_parts.append("")
+            learning_section = self._build_learning_context_section(learning_context)
+            if learning_section:
+                prompt_parts.append(learning_section)
+                prompt_parts.append("")
         
         # Add each file's changes
         for file in files:
@@ -270,3 +273,100 @@ Respond with valid JSON only:
 - Focus on actionable, specific feedback with working code fixes
 - Avoid generic advice - provide copy-pasteable solutions
 """
+
+    def _build_learning_context_section(self, learning_context: Dict) -> Optional[str]:
+        """
+        Build the learning context section for prompts.
+
+        Integrates team feedback to guide AI review focus:
+        - Prioritizes high-value issue types (frequently accepted by team)
+        - De-prioritizes low-value issue types (frequently rejected)
+        - Provides context on team preferences
+
+        Args:
+            learning_context: Dictionary from FeedbackTracker.get_learning_context()
+                Expected structure:
+                {
+                    "high_value_issue_types": ["SecretExposed", "PublicEndpoint"],
+                    "low_value_issue_types": ["MinorStyle"],
+                    "positive_feedback_rate": 0.85,
+                    "total_feedback_count": 150,
+                    "issue_type_stats": {...}
+                }
+
+        Returns:
+            Formatted learning context section, or None if insufficient data
+        """
+        if not learning_context:
+            return None
+
+        total_feedback = learning_context.get('total_feedback_count', 0)
+
+        # Require minimum feedback for statistical significance
+        if total_feedback < 5:
+            logger.debug(
+                "insufficient_feedback_for_learning",
+                total_feedback=total_feedback,
+                minimum_required=5
+            )
+            return None
+
+        high_value = learning_context.get('high_value_issue_types', [])
+        low_value = learning_context.get('low_value_issue_types', [])
+        positive_rate = learning_context.get('positive_feedback_rate', 0.0)
+
+        section_parts = ["## Team Preferences (Based on Past Feedback)", ""]
+
+        # Add positive feedback context
+        if positive_rate > 0:
+            section_parts.append(
+                f"Team acceptance rate: {positive_rate:.0%} "
+                f"(based on {total_feedback} feedback entries)"
+            )
+            section_parts.append("")
+
+        # High-value issue types - prioritize these
+        if high_value:
+            section_parts.append("**High-Priority Issues (Team Values These):**")
+            section_parts.append(
+                "Focus on these issue types - the team frequently acts on them:"
+            )
+            for issue_type in high_value[:5]:  # Top 5
+                section_parts.append(f"- {issue_type}")
+            section_parts.append("")
+
+        # Low-value issue types - de-prioritize
+        if low_value:
+            section_parts.append("**Low-Priority Issues (Team Often Ignores):**")
+            section_parts.append(
+                "De-prioritize or skip these - the team rarely acts on them:"
+            )
+            for issue_type in low_value[:3]:  # Top 3
+                section_parts.append(f"- {issue_type}")
+            section_parts.append("")
+
+        # Add guidance based on feedback
+        if high_value or low_value:
+            section_parts.append("**Guidance:**")
+            if high_value:
+                section_parts.append(
+                    "- Spend more effort on detailed analysis of high-priority issues"
+                )
+            if low_value:
+                section_parts.append(
+                    "- Only report low-priority issues if they are critical or high severity"
+                )
+            section_parts.append("")
+
+        # Return None if no meaningful content generated
+        if len(section_parts) <= 2:
+            return None
+
+        logger.info(
+            "learning_context_added_to_prompt",
+            high_value_count=len(high_value),
+            low_value_count=len(low_value),
+            total_feedback=total_feedback
+        )
+
+        return "\n".join(section_parts)

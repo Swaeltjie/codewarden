@@ -4,12 +4,13 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 1.0.0
+Version: 2.4.0 - Added SuggestedFix model and file path validation
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from enum import Enum
 import uuid
+import os
 from datetime import datetime, timezone
 
 
@@ -20,6 +21,18 @@ class IssueSeverity(str, Enum):
     MEDIUM = "medium"
     LOW = "low"
     INFO = "info"
+
+
+class SuggestedFix(BaseModel):
+    """
+    Represents a suggested code fix for an issue.
+
+    Provides before/after code snippets that developers can copy-paste.
+    """
+    description: str = Field(..., description="Brief description of the fix")
+    before: str = Field(..., description="Code that has the issue")
+    after: str = Field(..., description="Fixed code snippet")
+    explanation: Optional[str] = Field(None, description="Why this fix works")
 
 
 class ReviewIssue(BaseModel):
@@ -34,6 +47,40 @@ class ReviewIssue(BaseModel):
     message: str = Field(..., description="Human-readable issue description")
     suggestion: Optional[str] = Field(None, description="Suggested fix or remediation")
     code_snippet: Optional[str] = Field(None, description="Relevant code snippet")
+    suggested_fix: Optional[SuggestedFix] = Field(None, description="Detailed fix with before/after code")
+
+    @field_validator('file_path')
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        """
+        Validate file path to prevent path traversal attacks.
+
+        Rejects:
+        - Null bytes
+        - Path traversal patterns (../)
+        - Absolute paths outside repo
+        - Suspicious system paths
+        """
+        if not v:
+            raise ValueError("file_path cannot be empty")
+
+        # Check for null bytes
+        if '\x00' in v:
+            raise ValueError("file_path contains null bytes")
+
+        # Normalize and check for traversal
+        normalized = os.path.normpath(v)
+
+        # Check for path traversal patterns
+        if '..' in normalized.split(os.sep):
+            raise ValueError("file_path contains path traversal")
+
+        # Check for suspicious patterns
+        suspicious = ['/etc/', '/proc/', 'c:\\windows', '\\windows\\']
+        if any(pattern in v.lower() for pattern in suspicious):
+            raise ValueError("file_path contains suspicious pattern")
+
+        return v
     
     @property
     def is_critical_or_high(self) -> bool:

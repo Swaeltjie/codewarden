@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.3.0 - Added rate limiting, improved circuit breaker, connection pooling
+Version: 2.4.0 - Added dry-run mode, configurable cache TTL, improved timeout handling
 """
 import asyncio
 from typing import List, Optional
@@ -48,7 +48,8 @@ class PRWebhookHandler:
         self.context_manager = ContextManager()
         self.prompt_factory = PromptFactory()
         self.idempotency_checker = IdempotencyChecker()
-        self.response_cache = ResponseCache(ttl_days=7)
+        self.response_cache = ResponseCache()  # Uses configurable TTL from settings
+        self.dry_run = False  # When True, skips posting comments to Azure DevOps
 
     async def __aenter__(self):
         """Async context manager entry - initialize resources."""
@@ -591,15 +592,27 @@ class PRWebhookHandler:
         review_result: ReviewResult
     ) -> None:
         """Post review results as comments to Azure DevOps PR."""
-        
+
+        # Dry-run mode: skip posting, just log what would be posted
+        if self.dry_run:
+            inline_count = sum(1 for i in review_result.issues if i.severity in ["critical", "high"])
+            logger.info(
+                "dry_run_skip_posting",
+                pr_id=pr_event.pr_id,
+                issues_found=len(review_result.issues),
+                inline_comments_would_post=inline_count,
+                recommendation=review_result.recommendation
+            )
+            return
+
         # Format as markdown
         from src.services.comment_formatter import CommentFormatter
-        
+
         formatter = CommentFormatter()
-        
+
         # Main summary comment
         summary_markdown = formatter.format_summary(review_result)
-        
+
         await self.devops_client.post_pr_comment(
             project_id=pr_event.project_id,
             repository_id=pr_event.repository_id,
@@ -607,12 +620,12 @@ class PRWebhookHandler:
             comment=summary_markdown,
             thread_type="summary"
         )
-        
+
         # Individual inline comments for high/critical issues
         for issue in review_result.issues:
             if issue.severity in ["critical", "high"]:
                 inline_comment = formatter.format_inline_issue(issue)
-                
+
                 await self.devops_client.post_inline_comment(
                     project_id=pr_event.project_id,
                     repository_id=pr_event.repository_id,
@@ -621,7 +634,7 @@ class PRWebhookHandler:
                     line_number=issue.line_number,
                     comment=inline_comment
                 )
-        
+
         logger.info(
             "review_results_posted",
             pr_id=pr_event.pr_id,

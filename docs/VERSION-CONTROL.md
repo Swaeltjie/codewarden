@@ -1,13 +1,63 @@
 # Version Control & Changelog
 
-## Current Version: 2.3.0 (Production Ready)
+## Current Version: 2.4.0 (Production Ready)
 
 **Release Date:** 2025-12-01
-**Status:** ✅ Production Ready (Security & Performance Improvements)
+**Status:** ✅ Production Ready (Phase 2 Learning & Developer Experience)
 
 ---
 
 ## Version History
+
+### v2.4.0 - Phase 2 Learning & Developer Experience (2025-12-01)
+
+**Minor Release** - Learning context integration and developer experience improvements
+
+#### ✅ Phase 2 Learning System
+
+**Learning Context Integration:**
+- ✅ AI prompts include team preference context from feedback
+- ✅ High-value issue types prioritized (>70% acceptance)
+- ✅ Low-value issue types de-prioritized (<30% acceptance)
+- ✅ `_build_learning_context_section()` in prompts/factory.py
+
+**SuggestedFix Model:**
+- ✅ New Pydantic model with before/after code
+- ✅ `suggested_fix` field in ReviewIssue
+- ✅ Copy-pasteable solutions for developers
+
+#### ✅ Developer Experience
+
+**Dry-Run Mode:**
+- ✅ `DRY_RUN=true` environment variable
+- ✅ Full workflow without posting comments
+- ✅ Useful for testing and development
+
+**Function-Level Timeout:**
+- ✅ 8-minute timeout protection (480s)
+- ✅ Graceful 504 response for long reviews
+- ✅ Buffer before Azure's 10-min limit
+
+**Unit Tests:**
+- ✅ Comprehensive webhook handler tests
+- ✅ Strategy selection, dry-run, aggregation
+- ✅ File path validation tests
+
+#### ✅ Critical Fixes
+
+**Removed Unused Dependencies:**
+- ✅ Removed `anthropic==0.40.0`
+- ✅ Reduces attack surface
+
+**Exception Handling:**
+- ✅ Replaced bare exceptions with specific types
+- ✅ Context preserved in error logs
+
+**File Path Validation:**
+- ✅ Pydantic field_validator
+- ✅ Rejects path traversal, null bytes
+
+---
 
 ### v2.3.0 - Security & Performance Improvements (2025-12-01)
 
@@ -30,11 +80,6 @@
 - ✅ Sliding window rate limiter (100 req/min per IP)
 - ✅ Proper 429 responses with Retry-After header
 - ✅ X-Forwarded-For support for load balancers
-
-**Suggested Fix Generation:**
-- ✅ AI prompts request code-level fixes
-- ✅ New `suggested_fix` field with before/after code
-- ✅ Copy-pasteable solutions for developers
 
 **Connection Pool Tuning:**
 - ✅ Custom TCPConnector for Azure DevOps client

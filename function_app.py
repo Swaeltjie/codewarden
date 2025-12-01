@@ -4,11 +4,15 @@ AI PR Reviewer - Main Azure Functions Entry Point
 
 This module defines the Azure Functions HTTP triggers and orchestrates
 the PR review workflow.
+
+Version: 2.4.0 - Added timeout handling, dry-run mode, improved error logging
 """
 import azure.functions as func
 import logging
 import json
 import asyncio
+import os
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
 
@@ -19,6 +23,12 @@ from src.utils.config import get_settings, cleanup_secret_manager
 from src.utils.logging import setup_logging
 from src.models.pr_event import PREvent
 from src.utils.table_storage import cleanup_table_storage
+
+# Function-level timeout (8 minutes, leaves buffer before Azure's 10min timeout)
+FUNCTION_TIMEOUT_SECONDS = 480
+
+# Dry-run mode - skips posting to Azure DevOps
+DRY_RUN_MODE = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
 # Initialize logging
 settings = get_settings()
@@ -153,43 +163,91 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             )
         
         # Parse PR event with proper error handling
+        # Track context for error logging
+        pr_id = None
+        repository = None
+
         try:
             pr_event = PREvent.from_azure_devops_webhook(body)
+            pr_id = pr_event.pr_id
+            repository = pr_event.repository_name
+
             logger.info(
                 "pr_event_parsed",
                 pr_id=pr_event.pr_id,
                 repository=pr_event.repository_name,
-                author=pr_event.author_email
+                author=pr_event.author_email,
+                dry_run=DRY_RUN_MODE
             )
         except KeyError as e:
-            logger.error("webhook_parsing_failed", missing_field=str(e), body_keys=list(body.keys()))
+            logger.error(
+                "webhook_parsing_failed",
+                missing_field=str(e),
+                body_keys=list(body.keys())
+            )
             return func.HttpResponse(
                 json.dumps({"error": f"Invalid webhook structure: missing field {e}"}),
                 status_code=400,
                 mimetype="application/json"
             )
-        except Exception as e:
-            logger.error("pr_event_parse_failed", error=str(e), body=body)
+        except (ValueError, TypeError) as e:
+            logger.error(
+                "pr_event_parse_failed",
+                error=str(e),
+                error_type=type(e).__name__
+            )
             return func.HttpResponse(
                 json.dumps({"error": f"Invalid PR event format: {str(e)}"}),
                 status_code=400,
                 mimetype="application/json"
             )
-        
+
         # Initialize handler with context manager for proper resource cleanup
         async with PRWebhookHandler() as handler:
-            # Process the PR (async)
-            review_result = await handler.handle_pr_event(pr_event)
-        
+            # Set dry-run mode if enabled
+            if DRY_RUN_MODE:
+                handler.dry_run = True
+                logger.info("dry_run_mode_enabled", pr_id=pr_id)
+
+            # Process the PR with timeout protection
+            try:
+                review_result = await asyncio.wait_for(
+                    handler.handle_pr_event(pr_event),
+                    timeout=FUNCTION_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                error_id = str(uuid.uuid4())
+                logger.error(
+                    "pr_review_timeout",
+                    error_id=error_id,
+                    pr_id=pr_id,
+                    repository=repository,
+                    timeout_seconds=FUNCTION_TIMEOUT_SECONDS
+                )
+                return func.HttpResponse(
+                    json.dumps({
+                        "error": "Review timeout",
+                        "error_id": error_id,
+                        "pr_id": pr_id,
+                        "message": f"PR review exceeded {FUNCTION_TIMEOUT_SECONDS}s timeout. Try reducing PR size."
+                    }),
+                    status_code=504,
+                    mimetype="application/json"
+                )
+
+        # Log token usage metrics for monitoring
         logger.info(
             "pr_review_completed",
             pr_id=pr_event.pr_id,
             review_id=review_result.review_id,
             issues_found=len(review_result.issues),
-            duration_seconds=review_result.duration_seconds
+            duration_seconds=review_result.duration_seconds,
+            tokens_used=review_result.tokens_used,
+            estimated_cost=review_result.estimated_cost,
+            dry_run=DRY_RUN_MODE
         )
-        
-        # Return success response
+
+        # Return success response with token metrics
         return func.HttpResponse(
             json.dumps({
                 "status": "success",
@@ -197,21 +255,66 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
                 "pr_id": pr_event.pr_id,
                 "issues_found": len(review_result.issues),
                 "duration_seconds": review_result.duration_seconds,
-                "recommendation": review_result.recommendation
+                "recommendation": review_result.recommendation,
+                "tokens_used": review_result.tokens_used,
+                "estimated_cost_usd": review_result.estimated_cost,
+                "dry_run": DRY_RUN_MODE
             }),
             status_code=200,
             mimetype="application/json"
         )
-        
+
+    except (ConnectionError, TimeoutError) as e:
+        # Network-related errors
+        error_id = str(uuid.uuid4())
+        logger.error(
+            "webhook_network_error",
+            error_id=error_id,
+            error_type=type(e).__name__,
+            pr_id=pr_id,
+            repository=repository
+        )
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Service temporarily unavailable",
+                "error_id": error_id,
+                "message": "Network error occurred. Please retry."
+            }),
+            status_code=503,
+            mimetype="application/json"
+        )
+
+    except (ValueError, TypeError, KeyError) as e:
+        # Data validation errors
+        error_id = str(uuid.uuid4())
+        logger.error(
+            "webhook_validation_error",
+            error_id=error_id,
+            error_type=type(e).__name__,
+            error=str(e),
+            pr_id=pr_id,
+            repository=repository
+        )
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Invalid request data",
+                "error_id": error_id,
+                "message": "Request validation failed."
+            }),
+            status_code=400,
+            mimetype="application/json"
+        )
+
     except Exception as e:
-        # Generate error ID for tracking
-        import uuid
+        # Catch-all for unexpected errors (logged with full context)
         error_id = str(uuid.uuid4())
 
         logger.exception(
             "webhook_processing_failed",
             error_id=error_id,
-            error_type=type(e).__name__
+            error_type=type(e).__name__,
+            pr_id=pr_id,
+            repository=repository
         )
 
         # Never expose internal error details in response
@@ -312,7 +415,7 @@ async def health_check(req: func.HttpRequest) -> func.HttpResponse:
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "2.3.0"
+        "version": "2.4.0"
     }
     
     # Check dependencies

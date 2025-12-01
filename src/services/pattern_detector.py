@@ -4,7 +4,7 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.0.0 (Production)
+Version: 2.4.0 - Added async context manager for proper resource cleanup
 """
 import structlog
 import json
@@ -37,7 +37,22 @@ class PatternDetector:
     def __init__(self):
         """Initialize pattern detector."""
         self.settings = get_settings()
+        self._closed = False
         logger.info("pattern_detector_initialized")
+
+    async def close(self):
+        """Close resources."""
+        self._closed = True
+        logger.debug("pattern_detector_closed")
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit - cleanup resources."""
+        await self.close()
+        return False
 
     async def analyze_all_repositories(self, days: int = 30) -> List[Dict]:
         """

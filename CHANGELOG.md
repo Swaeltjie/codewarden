@@ -5,6 +5,97 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2025-12-01
+
+### Added - Phase 2 Learning & Developer Experience
+
+- **Phase 2 Learning Context Integration**
+  - AI prompts now include team preference context from historical feedback
+  - High-value issue types are prioritized (>70% acceptance rate)
+  - Low-value issue types are de-prioritized (<30% acceptance rate)
+  - Requires minimum 5 feedback entries for statistical significance
+  - Implemented in `prompts/factory.py:_build_learning_context_section()`
+
+- **SuggestedFix Model**
+  - New `SuggestedFix` Pydantic model with before/after code snippets
+  - `suggested_fix` field added to `ReviewIssue` model
+  - Copy-pasteable solutions for critical/high severity issues
+  - Schema: `{description, before, after, explanation}`
+
+- **Dry-Run Mode**
+  - Set `DRY_RUN=true` environment variable to skip posting to Azure DevOps
+  - Full review workflow executes, comments are logged but not posted
+  - Useful for testing and development without affecting PRs
+
+- **Function-Level Timeout Protection**
+  - 8-minute timeout (480s) on PR review operations
+  - Graceful 504 Gateway Timeout response for long-running reviews
+  - Leaves buffer before Azure Functions' 10-minute hard limit
+
+- **Webhook Handler Unit Tests**
+  - Comprehensive test suite in `tests/test_pr_webhook_handler.py`
+  - Tests for strategy selection, dry-run mode, result aggregation
+  - Tests for file path validation and SuggestedFix model
+  - Improves code coverage and regression detection
+
+- **Storage Rate Limiting**
+  - Max 100 writes per minute to Table Storage
+  - Prevents quota exhaustion from runaway processes
+  - Class-level tracking in `ResponseCache`
+
+### Fixed - Critical Issues
+
+- **Removed Unused Anthropic SDK**
+  - `anthropic==0.40.0` removed from requirements.txt
+  - Reduces attack surface and deployment size
+
+- **Improved Exception Handling**
+  - Replaced bare `except Exception` with specific exception types
+  - Network errors return 503 Service Unavailable
+  - Validation errors return 400 Bad Request
+  - Context (pr_id, repository) preserved in all error logs
+
+- **File Path Validation**
+  - `ReviewIssue.file_path` now validates against path traversal
+  - Rejects null bytes, `../` patterns, and suspicious system paths
+  - Pydantic `field_validator` for automatic validation
+
+### Changed
+
+- **Response Cache TTL** - Default reduced from 7 to 3 days
+  - Better alignment with 24-hour feedback collection window
+  - Configurable via `CACHE_TTL_DAYS` environment variable
+
+- **Token Metrics Exposure**
+  - `tokens_used` and `estimated_cost_usd` included in webhook response
+  - Structured logging includes token metrics for Datadog dashboards
+  - Enables cost monitoring and optimization
+
+- **Performance Test Marker**
+  - Added `performance` marker to pytest.ini
+  - Run performance tests separately: `pytest -m performance`
+
+- **Pattern Detector**
+  - Added async context manager for proper resource cleanup
+  - Consistent with FeedbackTracker implementation
+
+### Technical Details
+
+- **Learning Context**: Requires 5+ feedback entries, 70%/30% thresholds for high/low value
+- **Timeout**: `asyncio.wait_for()` with 480s timeout at function level
+- **Dry-Run**: `DRY_RUN` env var, handler attribute, skips `_post_review_results()`
+- **Rate Limiting**: Class-level `_write_timestamps` list, 60-second sliding window
+- **File Validation**: Pydantic `field_validator`, checks traversal/null/suspicious
+
+### Migration Notes
+
+- No breaking changes - fully backward compatible with v2.3.0
+- Set `DRY_RUN=true` to test without posting comments
+- Set `CACHE_TTL_DAYS=7` to restore previous cache TTL behavior
+- Run `pip install -r requirements.txt` to remove Anthropic SDK
+
+---
+
 ## [2.3.0] - 2025-12-01
 
 ### Added - Security & Performance Improvements
