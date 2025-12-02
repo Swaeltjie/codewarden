@@ -23,6 +23,17 @@ import openai
 
 from src.utils.config import get_secret_manager, get_settings
 from src.services.circuit_breaker import CircuitBreakerManager, CircuitBreakerError
+from src.utils.constants import (
+    AI_CLIENT_TIMEOUT,
+    AI_REQUEST_TIMEOUT,
+    MAX_PROMPT_LENGTH,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
+    COST_PER_1K_PROMPT_TOKENS,
+    COST_PER_1K_COMPLETION_TOKENS,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -49,7 +60,7 @@ class AIClient:
                     api_version="2024-10-21",  # Latest GA version
                     azure_endpoint=self.settings.AZURE_AI_ENDPOINT,
                     max_retries=0,  # We handle retries ourselves with tenacity
-                    timeout=60.0
+                    timeout=float(AI_CLIENT_TIMEOUT)
                 )
                 logger.info(
                     "azure_ai_client_initialized",
@@ -62,7 +73,7 @@ class AIClient:
                 self._client = AsyncOpenAI(
                     api_key=api_key,
                     max_retries=0,
-                    timeout=60.0
+                    timeout=float(AI_CLIENT_TIMEOUT)
                 )
                 logger.info("openai_client_initialized")
         
@@ -121,12 +132,11 @@ class AIClient:
             logger.warning(
                 "invalid_max_tokens",
                 max_tokens=max_tokens,
-                using_default=4000
+                using_default=DEFAULT_MAX_TOKENS
             )
-            max_tokens = 4000
+            max_tokens = DEFAULT_MAX_TOKENS
 
         # Validate prompt parameter (prevent memory exhaustion from huge prompts)
-        MAX_PROMPT_LENGTH = 1_000_000  # 1 million chars (~250K tokens max)
         if not prompt or not isinstance(prompt, str):
             logger.error("invalid_prompt_parameter", prompt_type=type(prompt).__name__)
             raise ValueError("Prompt must be a non-empty string")
@@ -169,8 +179,8 @@ class AIClient:
             # Get circuit breaker for OpenAI service
             breaker = await CircuitBreakerManager.get_breaker(
                 service_name="openai",
-                failure_threshold=5,  # Open after 5 failures
-                timeout_seconds=60    # Wait 60s before retry
+                failure_threshold=DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+                timeout_seconds=DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS
             )
 
             # Define the API call function for circuit breaker
@@ -194,11 +204,11 @@ class AIClient:
                                 "content": prompt
                             }
                         ],
-                        temperature=0.2,  # Low temperature for consistent, focused reviews
+                        temperature=DEFAULT_TEMPERATURE,
                         max_tokens=max_tokens,
                         response_format={"type": "json_object"}  # Enforce JSON response
                     ),
-                    timeout=90.0  # 90 second per-request timeout
+                    timeout=float(AI_REQUEST_TIMEOUT)
                 )
 
             # Execute with circuit breaker protection
@@ -210,8 +220,8 @@ class AIClient:
             completion_tokens = response.usage.completion_tokens
             
             # Calculate cost (approximate for GPT-4 Turbo)
-            # $0.01 per 1K prompt tokens, $0.03 per 1K completion tokens
-            cost = (prompt_tokens * 0.00001) + (completion_tokens * 0.00003)
+            cost = (prompt_tokens * COST_PER_1K_PROMPT_TOKENS / 1000) + \
+                   (completion_tokens * COST_PER_1K_COMPLETION_TOKENS / 1000)
             
             logger.info(
                 "ai_review_completed",
@@ -296,7 +306,7 @@ class AIClient:
             raise Exception(f"OpenAI service temporarily unavailable: {str(e)}")
 
         except openai.RateLimitError as e:
-            retry_after = getattr(e, 'retry_after', 60)
+            retry_after = getattr(e, 'retry_after', DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS)
             logger.warning(
                 "openai_rate_limited",
                 retry_after=retry_after,
@@ -304,12 +314,12 @@ class AIClient:
             )
             # Tenacity will retry automatically
             raise
-        
+
         except openai.APITimeoutError as e:
             logger.warning(
                 "openai_timeout",
                 model=model,
-                timeout=60
+                timeout=AI_CLIENT_TIMEOUT
             )
             # Tenacity will retry automatically
             raise

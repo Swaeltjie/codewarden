@@ -4,13 +4,18 @@ Reliability Models
 
 Data models for idempotency tracking and response caching.
 
-Version: 2.3.0
+Version: 2.5.3
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
 import hashlib
 import json
+
+from src.utils.constants import (
+    DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
+)
 
 
 class IdempotencyEntity(BaseModel):
@@ -244,7 +249,7 @@ class CircuitBreakerState(BaseModel):
             self.state = "CLOSED"
             self.last_state_change = datetime.now(timezone.utc)
 
-    def record_failure(self, failure_threshold: int = 5, timeout_seconds: int = 60) -> None:
+    def record_failure(self, failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD, timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS) -> None:
         """Record failed request and potentially open circuit."""
         now = datetime.now(timezone.utc)
         self.failure_count += 1

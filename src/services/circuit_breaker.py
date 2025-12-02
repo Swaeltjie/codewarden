@@ -12,10 +12,16 @@ from datetime import datetime, timezone, timedelta
 import asyncio
 from functools import wraps
 
-# Maximum time to wait for circuit breaker lock (seconds)
-LOCK_TIMEOUT_SECONDS = 30
-
 from src.models.reliability import CircuitBreakerState
+from src.utils.constants import (
+    CIRCUIT_BREAKER_LOCK_TIMEOUT_SECONDS,
+    DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
+    DEFAULT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
+)
+
+# Alias for backward compatibility
+LOCK_TIMEOUT_SECONDS = CIRCUIT_BREAKER_LOCK_TIMEOUT_SECONDS
 
 logger = structlog.get_logger(__name__)
 
@@ -43,9 +49,9 @@ class CircuitBreaker:
     def __init__(
         self,
         service_name: str,
-        failure_threshold: int = 5,
-        timeout_seconds: int = 60,
-        success_threshold: int = 2
+        failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
+        success_threshold: int = DEFAULT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD
     ):
         """
         Initialize circuit breaker.
@@ -234,9 +240,9 @@ class CircuitBreakerManager:
     async def get_breaker(
         cls,
         service_name: str,
-        failure_threshold: int = 5,
-        timeout_seconds: int = 60,
-        success_threshold: int = 2
+        failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
+        success_threshold: int = DEFAULT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD
     ) -> CircuitBreaker:
         """
         Get or create circuit breaker for service.
@@ -290,8 +296,8 @@ class CircuitBreakerManager:
 
 def with_circuit_breaker(
     service_name: str,
-    failure_threshold: int = 5,
-    timeout_seconds: int = 60
+    failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS
 ):
     """
     Decorator to add circuit breaker protection to async functions.

@@ -13,6 +13,12 @@ from functools import lru_cache
 from typing import Optional
 import structlog
 
+from src.utils.constants import (
+    DEFAULT_MAX_TOKENS,
+    CACHE_TTL_DAYS as DEFAULT_CACHE_TTL_DAYS,
+    AZURE_DEVOPS_TIMEOUT,
+)
+
 logger = structlog.get_logger(__name__)
 
 # Application version - single source of truth
@@ -34,7 +40,7 @@ class Settings(BaseSettings):
 
     # AI Configuration
     OPENAI_MODEL: str = "gpt-4o"  # Model name or deployment name
-    OPENAI_MAX_TOKENS: int = 4000
+    OPENAI_MAX_TOKENS: int = DEFAULT_MAX_TOKENS
 
     # Application Configuration
     LOG_LEVEL: str = "INFO"
@@ -45,7 +51,7 @@ class Settings(BaseSettings):
     AZURE_AI_DEPLOYMENT: Optional[str] = None  # Your deployment name (e.g., gpt-4o-review)
 
     # Cache Configuration (v2.5.0)
-    CACHE_TTL_DAYS: int = 3  # Cache TTL in days (aligned with 24h feedback window)
+    CACHE_TTL_DAYS: int = DEFAULT_CACHE_TTL_DAYS  # Cache TTL in days
 
     # Concurrency Configuration (v2.5.0)
     MAX_CONCURRENT_REVIEWS: int = 10  # Max parallel file reviews

@@ -23,9 +23,13 @@ from src.utils.config import get_settings, cleanup_secret_manager, __version__
 from src.utils.logging import setup_logging
 from src.models.pr_event import PREvent
 from src.utils.table_storage import cleanup_table_storage
-
-# Function-level timeout (8 minutes, leaves buffer before Azure's 10min timeout)
-FUNCTION_TIMEOUT_SECONDS = 480
+from src.utils.constants import (
+    FUNCTION_TIMEOUT_SECONDS,
+    MAX_PAYLOAD_SIZE_BYTES,
+    RATE_LIMIT_MAX_REQUESTS,
+    RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_RETRY_AFTER_SECONDS,
+)
 
 # Dry-run mode - skips posting to Azure DevOps
 DRY_RUN_MODE = os.environ.get('DRY_RUN', 'false').lower() == 'true'
@@ -72,19 +76,18 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps({
                     "error": "Rate limit exceeded",
-                    "retry_after": 60,
+                    "retry_after": DEFAULT_RETRY_AFTER_SECONDS,
                     "message": "Too many requests. Please wait before retrying."
                 }),
                 status_code=429,
                 mimetype="application/json",
-                headers={"Retry-After": "60"}
+                headers={"Retry-After": str(DEFAULT_RETRY_AFTER_SECONDS)}
             )
 
         # Validate payload size (max 1MB)
-        MAX_PAYLOAD_SIZE = 1024 * 1024  # 1MB
         content_length = req.headers.get('Content-Length')
 
-        if content_length and int(content_length) > MAX_PAYLOAD_SIZE:
+        if content_length and int(content_length) > MAX_PAYLOAD_SIZE_BYTES:
             logger.warning("payload_too_large", size=content_length)
             return func.HttpResponse(
                 json.dumps({"error": "Payload too large (max 1MB)"}),
@@ -97,7 +100,7 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             raw_body = req.get_body()
 
             # Check actual body size
-            if len(raw_body) > MAX_PAYLOAD_SIZE:
+            if len(raw_body) > MAX_PAYLOAD_SIZE_BYTES:
                 logger.warning("payload_size_exceeded", size=len(raw_body))
                 return func.HttpResponse(
                     json.dumps({"error": "Payload too large (max 1MB)"}),
@@ -817,8 +820,11 @@ class RateLimiter:
             return max(0, self.max_requests - len(self._requests.get(client_id, [])))
 
 
-# Global rate limiter instance (100 requests per minute per IP)
-_rate_limiter = RateLimiter(max_requests=100, window_seconds=60)
+# Global rate limiter instance
+_rate_limiter = RateLimiter(
+    max_requests=RATE_LIMIT_MAX_REQUESTS,
+    window_seconds=RATE_LIMIT_WINDOW_SECONDS
+)
 
 
 def _get_client_ip(req: func.HttpRequest) -> str:

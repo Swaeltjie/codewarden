@@ -31,6 +31,13 @@ from azure.identity.aio import DefaultAzureCredential
 
 from src.utils.config import get_secret_manager, get_settings
 from src.services.circuit_breaker import CircuitBreakerManager, CircuitBreakerError
+from src.utils.constants import (
+    AZURE_DEVOPS_TIMEOUT,
+    DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
+    DEFAULT_RETRY_AFTER_SECONDS,
+    MAX_COMMENT_LENGTH,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -42,7 +49,7 @@ class DevOpsAuthError(Exception):
 
 class DevOpsRateLimitError(Exception):
     """Rate limit exceeded."""
-    def __init__(self, message: str, retry_after: int = 60):
+    def __init__(self, message: str, retry_after: int = DEFAULT_RETRY_AFTER_SECONDS):
         super().__init__(message)
         self.retry_after = retry_after
 
@@ -158,7 +165,7 @@ class AzureDevOpsClient:
                             "Content-Type": "application/json",
                             "Accept": "application/json"
                         },
-                        timeout=aiohttp.ClientTimeout(total=30)
+                        timeout=aiohttp.ClientTimeout(total=AZURE_DEVOPS_TIMEOUT)
                     )
 
                     logger.info(
@@ -220,8 +227,8 @@ class AzureDevOpsClient:
         # Get circuit breaker for Azure DevOps
         breaker = await CircuitBreakerManager.get_breaker(
             service_name="azure_devops",
-            failure_threshold=5,
-            timeout_seconds=60
+            failure_threshold=DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+            timeout_seconds=DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS
         )
 
         # Define API call function
@@ -231,7 +238,7 @@ class AzureDevOpsClient:
                 if response.status == 401:
                     raise DevOpsAuthError("Authentication failed - check Managed Identity permissions")
                 elif response.status == 429:
-                    retry_after = int(response.headers.get('Retry-After', 60))
+                    retry_after = int(response.headers.get('Retry-After', DEFAULT_RETRY_AFTER_SECONDS))
                     raise DevOpsRateLimitError(
                         "Rate limit exceeded",
                         retry_after=retry_after
@@ -631,7 +638,6 @@ class AzureDevOpsClient:
             ValueError: If comment exceeds max length (64KB for Azure DevOps API)
         """
         # Azure DevOps has a 64KB limit on comment content
-        MAX_COMMENT_LENGTH = 65536
         if len(comment) > MAX_COMMENT_LENGTH:
             logger.warning(
                 "comment_too_long",

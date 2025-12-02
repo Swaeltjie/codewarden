@@ -22,6 +22,13 @@ from src.utils.table_storage import (
 from src.models.feedback import FeedbackEntity, FeedbackType
 from src.services.azure_devops import AzureDevOpsClient
 from src.utils.config import get_settings
+from src.utils.constants import (
+    FEEDBACK_TABLE_NAME,
+    FEEDBACK_MIN_SAMPLES,
+    FEEDBACK_HIGH_VALUE_THRESHOLD,
+    FEEDBACK_LOW_VALUE_THRESHOLD,
+    PATTERN_ANALYSIS_DAYS,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -376,16 +383,16 @@ class FeedbackTracker:
                 if total > 0:
                     issue_rates[issue_type] = stats["positive"] / total
 
-            # Identify high-value (>70% positive) and low-value (<30% positive) types
-            # Require at least 5 feedback entries to be statistically meaningful
+            # Identify high-value and low-value issue types
+            # Require minimum samples to be statistically meaningful
             high_value = [
                 itype for itype, rate in issue_rates.items()
-                if rate > 0.7 and (issue_stats[itype]["positive"] + issue_stats[itype]["negative"]) >= 5
+                if rate > FEEDBACK_HIGH_VALUE_THRESHOLD and (issue_stats[itype]["positive"] + issue_stats[itype]["negative"]) >= FEEDBACK_MIN_SAMPLES
             ]
 
             low_value = [
                 itype for itype, rate in issue_rates.items()
-                if rate < 0.3 and (issue_stats[itype]["positive"] + issue_stats[itype]["negative"]) >= 5
+                if rate < FEEDBACK_LOW_VALUE_THRESHOLD and (issue_stats[itype]["positive"] + issue_stats[itype]["negative"]) >= FEEDBACK_MIN_SAMPLES
             ]
 
             total_feedback = total_positive + total_negative
@@ -426,7 +433,7 @@ class FeedbackTracker:
                 "error": str(e)
             }
 
-    async def get_feedback_summary(self, days: int = 30) -> Dict:
+    async def get_feedback_summary(self, days: int = PATTERN_ANALYSIS_DAYS) -> Dict:
         """
         Get summary of feedback across all repositories.
 

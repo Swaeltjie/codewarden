@@ -20,6 +20,17 @@ from src.utils.table_storage import (
     query_entities_paginated
 )
 from src.utils.config import get_settings
+from src.utils.constants import (
+    PATTERN_ANALYSIS_DAYS,
+    PATTERN_RECURRENCE_THRESHOLD,
+    HEALTH_SCORE_MAX,
+    HEALTH_SCORE_EXCELLENT,
+    HEALTH_SCORE_HEALTHY,
+    HEALTH_SCORE_MODERATE,
+    HEALTH_SCORE_NEEDS_ATTENTION,
+    HEALTH_SCORE_RECURRING_PENALTY,
+    REVIEW_HISTORY_TABLE_NAME,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -99,7 +110,7 @@ class PatternDetector:
         await self.close()
         return False
 
-    async def analyze_all_repositories(self, days: int = 30) -> List[Dict]:
+    async def analyze_all_repositories(self, days: int = PATTERN_ANALYSIS_DAYS) -> List[Dict]:
         """
         Analyze patterns across all repositories.
 
@@ -339,15 +350,14 @@ class PatternDetector:
                 issue_type_counter[issue_type] += 1
                 issue_type_pr_count[issue_type].add(pr_id)
 
-        # Identify recurring issues (appear in >30% of PRs)
+        # Identify recurring issues (appear in >threshold% of PRs)
         total_prs = len(reviews)
-        recurrence_threshold = 0.3
 
         recurring_issues = []
         for issue_type, pr_count in issue_type_pr_count.items():
             occurrence_rate = len(pr_count) / total_prs if total_prs > 0 else 0
 
-            if occurrence_rate >= recurrence_threshold:
+            if occurrence_rate >= PATTERN_RECURRENCE_THRESHOLD:
                 recurring_issues.append({
                     "issue_type": issue_type,
                     "occurrence_count": issue_type_counter[issue_type],
@@ -498,7 +508,7 @@ class PatternDetector:
             }
         }
 
-    async def get_repository_health_score(self, repository: str, days: int = 30) -> Dict:
+    async def get_repository_health_score(self, repository: str, days: int = PATTERN_ANALYSIS_DAYS) -> Dict:
         """
         Calculate health score for a repository.
 
@@ -570,11 +580,11 @@ class PatternDetector:
             health_score = max(0, min(100, health_score))
 
             # Determine status
-            if health_score >= 80:
+            if health_score >= HEALTH_SCORE_HEALTHY:
                 status = "healthy"
-            elif health_score >= 60:
+            elif health_score >= HEALTH_SCORE_MODERATE:
                 status = "moderate"
-            elif health_score >= 40:
+            elif health_score >= HEALTH_SCORE_NEEDS_ATTENTION:
                 status = "needs_attention"
             else:
                 status = "critical"
@@ -607,7 +617,7 @@ class PatternDetector:
                 "error": str(e)
             }
 
-    async def get_global_summary(self, days: int = 30) -> Dict:
+    async def get_global_summary(self, days: int = PATTERN_ANALYSIS_DAYS) -> Dict:
         """
         Get global summary across all repositories.
 

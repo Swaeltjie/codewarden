@@ -16,6 +16,11 @@ from typing import Dict, Any
 from src.services.circuit_breaker import CircuitBreakerManager
 from src.services.response_cache import ResponseCache
 from src.services.idempotency_checker import IdempotencyChecker
+from src.utils.constants import (
+    HEALTH_SCORE_EXCELLENT,
+    HEALTH_SCORE_HEALTHY,
+    HEALTH_SCORE_MODERATE,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -167,9 +172,9 @@ class ReliabilityHealthHandler:
             idempotency_status = "healthy"
 
         # Determine overall status
-        if health_score >= 90:
+        if health_score >= HEALTH_SCORE_EXCELLENT:
             overall_status = "healthy"
-        elif health_score >= 70:
+        elif health_score >= HEALTH_SCORE_HEALTHY - 10:  # 70
             overall_status = "degraded"
         else:
             overall_status = "unhealthy"

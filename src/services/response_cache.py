@@ -20,6 +20,11 @@ from src.utils.table_storage import (
     query_entities_paginated
 )
 from src.utils.config import get_settings
+from src.utils.constants import (
+    CACHE_TTL_DAYS,
+    CACHE_MAX_WRITES_PER_MINUTE,
+    CACHE_TABLE_NAME,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -37,11 +42,7 @@ class ResponseCache:
     - Storage rate limiting (v2.4.0)
     """
 
-    # Fallback default TTL (used if settings not available)
-    DEFAULT_TTL_DAYS = 3
-
-    # Storage rate limiting - max writes per minute (class-level shared across instances)
-    MAX_WRITES_PER_MINUTE = 100
+    # Storage rate limiting - class-level shared across instances
     _write_timestamps: list = []
     _write_lock = None  # Will be initialized on first use (using asyncio.Lock for async safety)
 
@@ -53,7 +54,7 @@ class ResponseCache:
             ttl_days: Time-to-live in days (default from Settings.CACHE_TTL_DAYS)
         """
         self.settings = get_settings()
-        self.table_name = 'responsecache'
+        self.table_name = CACHE_TABLE_NAME
 
         # Use provided TTL, or use settings value, or use default
         if ttl_days is not None:
@@ -91,11 +92,11 @@ class ResponseCache:
             ]
 
             # Check rate limit
-            if len(ResponseCache._write_timestamps) >= self.MAX_WRITES_PER_MINUTE:
+            if len(ResponseCache._write_timestamps) >= CACHE_MAX_WRITES_PER_MINUTE:
                 logger.warning(
                     "storage_write_rate_limited",
                     writes_in_window=len(ResponseCache._write_timestamps),
-                    max_allowed=self.MAX_WRITES_PER_MINUTE
+                    max_allowed=CACHE_MAX_WRITES_PER_MINUTE
                 )
                 return False
 
