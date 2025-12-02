@@ -7,7 +7,7 @@ Provides health and metrics endpoints for monitoring reliability features:
 - Response cache statistics
 - Idempotency statistics
 
-Version: 2.5.7 - Centralized constants and logging usage
+Version: 2.5.9 - Added input validation, fixed division by zero, standardized error responses
 """
 from datetime import datetime, timezone
 from typing import Dict, Any
@@ -22,8 +22,12 @@ from src.utils.constants import (
     HEALTH_SCORE_MODERATE,
 )
 from src.utils.logging import get_logger
+from src.utils.config import __version__
 
 logger = get_logger(__name__)
+
+# Health score threshold for degraded status
+HEALTH_SCORE_DEGRADED = 70
 
 
 class ReliabilityHealthHandler:
@@ -71,7 +75,7 @@ class ReliabilityHealthHandler:
             response = {
                 "status": overall_health["status"],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "version": "2.2.0",
+                "version": __version__,
                 "features": {
                     "circuit_breakers": {
                         "status": overall_health["circuit_breaker_status"],
@@ -175,7 +179,7 @@ class ReliabilityHealthHandler:
         # Determine overall status
         if health_score >= HEALTH_SCORE_EXCELLENT:
             overall_status = "healthy"
-        elif health_score >= HEALTH_SCORE_HEALTHY - 10:  # 70
+        elif health_score >= HEALTH_SCORE_DEGRADED:
             overall_status = "degraded"
         else:
             overall_status = "unhealthy"
@@ -238,7 +242,7 @@ class ReliabilityHealthHandler:
         if active_entries == 0:
             issues.append("No cached entries")
 
-        if expired_entries > active_entries * 0.5:
+        if active_entries > 0 and expired_entries > active_entries * 0.5:
             issues.append(f"High expired ratio ({expired_entries}/{active_entries})")
 
         if issues:
@@ -293,7 +297,12 @@ class ReliabilityHealthHandler:
 
         except Exception as e:
             logger.exception("circuit_breaker_status_failed", error=str(e))
-            return {"error": str(e)}
+            return {
+                "status": "error",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
 
     async def get_cache_statistics(self, repository: str = None) -> Dict[str, Any]:
         """
@@ -305,6 +314,26 @@ class ReliabilityHealthHandler:
         Returns:
             Cache statistics
         """
+        # Validate repository parameter
+        if repository is not None:
+            import re
+            if not isinstance(repository, str):
+                logger.warning("invalid_repository_type", repository_type=type(repository).__name__)
+                return {
+                    "status": "error",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "error": "repository parameter must be a string",
+                    "error_type": "ValueError"
+                }
+            if not re.match(r'^[a-zA-Z0-9_\-\.]{1,500}$', repository):
+                logger.warning("invalid_repository_parameter", repository=repository)
+                return {
+                    "status": "error",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "error": "Invalid repository name format (allowed: alphanumeric, dash, underscore, dot, max 500 chars)",
+                    "error_type": "ValueError"
+                }
+
         try:
             stats = await self.response_cache.get_cache_statistics(repository=repository)
 
@@ -316,18 +345,33 @@ class ReliabilityHealthHandler:
 
         except Exception as e:
             logger.exception("cache_statistics_failed", error=str(e))
-            return {"error": str(e)}
+            return {
+                "status": "error",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
 
     async def get_idempotency_statistics(self, days: int = 7) -> Dict[str, Any]:
         """
         Get detailed idempotency statistics.
 
         Args:
-            days: Number of days to analyze
+            days: Number of days to analyze (must be between 1 and 365)
 
         Returns:
             Idempotency statistics
         """
+        # Validate days parameter
+        if not isinstance(days, int) or days < 1 or days > 365:
+            logger.warning("invalid_days_parameter", days=days, days_type=type(days).__name__)
+            return {
+                "status": "error",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": "days parameter must be an integer between 1 and 365",
+                "error_type": "ValueError"
+            }
+
         try:
             stats = await self.idempotency_checker.get_statistics(days=days)
 
@@ -339,7 +383,12 @@ class ReliabilityHealthHandler:
 
         except Exception as e:
             logger.exception("idempotency_statistics_failed", error=str(e))
-            return {"error": str(e)}
+            return {
+                "status": "error",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
 
     async def reset_circuit_breakers(self) -> Dict[str, Any]:
         """

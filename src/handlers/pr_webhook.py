@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.5.0 - Fixed error context in parallel ops, added concurrency limiting
+Version: 2.5.9 - Fixed resource leak in __aenter__, added file path length validation, improved error handling
 """
 import asyncio
 from typing import List, Optional, Tuple
@@ -56,9 +56,15 @@ class PRWebhookHandler:
 
     async def __aenter__(self):
         """Async context manager entry - initialize resources."""
-        self.devops_client = await AzureDevOpsClient().__aenter__()
-        self.ai_client = await AIClient().__aenter__()
-        return self
+        try:
+            self.devops_client = await AzureDevOpsClient().__aenter__()
+            self.ai_client = await AIClient().__aenter__()
+            return self
+        except Exception:
+            # Clean up any partially initialized resources
+            if self.devops_client:
+                await self.devops_client.close()
+            raise
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - cleanup resources."""
@@ -162,7 +168,7 @@ class PRWebhookHandler:
             logger.info(
                 "diffs_parsed",
                 total_changed_lines=total_changed_lines,
-                avg_per_file=total_changed_lines / len(changed_files) if changed_files else 0
+                avg_per_file=round(total_changed_lines / len(changed_files), 2) if changed_files else 0
             )
             
             # Step 4: Determine review strategy
@@ -334,6 +340,11 @@ class PRWebhookHandler:
         Returns:
             FileType enum
         """
+        # Check for excessively long paths (DoS protection)
+        if len(file_path) > 2000:  # Match FileChange.path max_length
+            logger.warning("file_path_too_long", path_length=len(file_path))
+            return FileType.UNKNOWN
+
         # Sanitize file path to prevent path traversal
         if not self._is_safe_path(file_path):
             logger.warning("unsafe_file_path_detected", path=file_path)
@@ -728,7 +739,7 @@ class PRWebhookHandler:
             strategy: Review strategy used
         """
         try:
-            # Ensure table exists
+            # Ensure table exists (moved inside try block for proper error handling)
             ensure_table_exists('reviewhistory')
             table_client = get_table_client('reviewhistory')
 

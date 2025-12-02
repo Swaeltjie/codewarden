@@ -5,6 +5,63 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.9] - 2025-12-02
+
+### Fixed - Handlers Module Security & Reliability
+
+- **Resource Leak in Context Manager** (`pr_webhook.py`) - HIGH
+  - Fixed resource leak when `AIClient().__aenter__()` raises exception
+  - Added try/except wrapper to ensure `devops_client` cleanup on partial initialization
+  - Prevents connection leaks on startup failures
+
+- **Missing Input Validation on `days` Parameter** (`reliability_health.py`) - HIGH
+  - Added validation requiring integer between 1-365 for `get_idempotency_statistics()`
+  - Returns standardized error response for invalid values
+  - Prevents DoS via excessive date range queries
+
+- **Missing Input Validation on `repository` Parameter** (`reliability_health.py`) - HIGH
+  - Added regex validation: alphanumeric, dash, underscore, dot (max 500 chars)
+  - Prevents injection attacks via malicious repository names
+  - Returns standardized error response for invalid values
+
+- **Unsafe Table Operation Outside Try Block** (`pr_webhook.py`) - HIGH
+  - Moved `ensure_table_exists('reviewhistory')` inside try block
+  - Prevents unhandled crashes on table creation failure
+
+- **Missing File Path Length Validation** (`pr_webhook.py`) - MEDIUM
+  - Added length check (max 2000 chars) matching FileChange model constraint
+  - Returns `FileType.UNKNOWN` for excessively long paths
+  - Prevents DoS via malicious long file paths
+
+- **Division by Zero Risk** (`reliability_health.py`) - MEDIUM
+  - Fixed `_assess_cache_health()` to check `active_entries > 0` before ratio calculation
+  - Prevents potential division by zero when cache is empty
+
+- **Hardcoded Version String** (`reliability_health.py`) - MEDIUM
+  - Replaced hardcoded "2.2.0" with `__version__` import from config
+  - Ensures version consistency across all endpoints
+
+- **Magic Number in Health Calculation** (`reliability_health.py`) - MEDIUM
+  - Defined `HEALTH_SCORE_DEGRADED = 70` constant
+  - Replaces hardcoded value for maintainability
+
+- **Float Precision in Logging** (`pr_webhook.py`) - LOW
+  - Rounded `avg_per_file` to 2 decimal places in logging
+  - Prevents excessively long float values in logs
+
+- **Inconsistent Error Response Format** (`reliability_health.py`) - LOW
+  - Standardized all error responses to include `status`, `timestamp`, `error`, `error_type`
+  - Ensures consistent API error format
+
+### Technical Details
+
+- **Files Modified**: 2 files in src/handlers/
+- **Security Impact**: Prevents injection attacks, DoS, and resource leaks
+- **Reliability Impact**: Improved error handling and input validation
+- **Compatibility**: Fully backward compatible with v2.5.8
+
+---
+
 ## [2.5.8] - 2025-12-02
 
 ### Fixed - Models Module Input Validation & Security
