@@ -4,7 +4,7 @@ Application Constants
 
 Centralized constants to avoid magic numbers throughout the codebase.
 
-Version: 2.5.5
+Version: 2.5.6
 """
 
 # Function App Settings

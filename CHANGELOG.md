@@ -5,6 +5,44 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.6] - 2025-12-02
+
+### Fixed - Prompts Module Security (Prompt Injection Prevention)
+
+- **CRITICAL: Prompt Injection Vulnerability** (`factory.py`)
+  - User-controlled input (PR titles, file paths, issue messages) was directly interpolated into AI prompts
+  - Created `_sanitize_user_input()` method that:
+    - Truncates input to maximum safe lengths (DoS protection)
+    - Removes common prompt injection patterns via regex
+    - Blocks "ignore previous instructions", "system:", "assistant:" markers
+    - Limits consecutive newlines to prevent section breaks
+    - Logs potential attack attempts for security monitoring
+
+- **HIGH: Unsafe Learning Context Injection** (`factory.py`)
+  - Learning context data accepted without type validation
+  - Created `_validate_learning_context()` method that:
+    - Validates dictionary structure and field types
+    - Sanitizes all string values in issue type lists
+    - Limits list lengths to prevent DoS (max 10 items)
+    - Validates numeric ranges (feedback rate 0-1, count >= 0)
+
+- **MEDIUM: Missing Input Validation on Empty Lists** (`factory.py`)
+  - Added validation checks at start of all prompt building methods
+  - `build_single_pass_prompt()`: Raises ValueError if files list is empty
+  - `build_group_prompt()` / `build_cross_file_prompt()`: Returns empty string with warning
+
+- **LOW: DoS Protection via Input Length Limits** (`factory.py`)
+  - Added class constants: MAX_TITLE_LENGTH=500, MAX_PATH_LENGTH=1000, MAX_MESSAGE_LENGTH=5000
+  - Applied truncation in sanitization method
+
+### Technical Details
+
+- **Files Modified**: 3 files, +221/-41 lines in factory.py
+- **Security Impact**: Prevents prompt injection attacks that could manipulate AI review results
+- **Compatibility**: Fully backward compatible with v2.5.5
+
+---
+
 ## [2.5.5] - 2025-12-02
 
 ### Fixed - Services Module Security & Reliability
