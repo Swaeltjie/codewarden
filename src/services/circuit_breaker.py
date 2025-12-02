@@ -4,15 +4,15 @@ Circuit Breaker Pattern
 
 Prevents cascading failures when external services are down.
 
-Version: 2.5.5 - Fixed deadlock vulnerability, improved lock handling
+Version: 2.5.10 - Centralized logging usage
 """
-import structlog
 from typing import Callable, Any, Optional, Dict
 from datetime import datetime, timezone, timedelta
 import asyncio
 from functools import wraps
 
 from src.models.reliability import CircuitBreakerState
+from src.utils.logging import get_logger
 from src.utils.constants import (
     CIRCUIT_BREAKER_LOCK_TIMEOUT_SECONDS,
     DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
@@ -23,7 +23,7 @@ from src.utils.constants import (
 # Alias for backward compatibility
 LOCK_TIMEOUT_SECONDS = CIRCUIT_BREAKER_LOCK_TIMEOUT_SECONDS
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CircuitBreakerError(Exception):

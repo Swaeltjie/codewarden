@@ -4,9 +4,8 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.5.5 - Fixed datetime parsing vulnerability
+Version: 2.5.10 - Centralized logging usage
 """
-import structlog
 import uuid
 import json
 from typing import Dict, List, Optional
@@ -29,8 +28,9 @@ from src.utils.constants import (
     FEEDBACK_LOW_VALUE_THRESHOLD,
     PATTERN_ANALYSIS_DAYS,
 )
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class FeedbackTracker:

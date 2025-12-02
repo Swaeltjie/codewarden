@@ -5,51 +5,95 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.10] - 2025-12-02
+
+### Changed - Centralized Logging Throughout Codebase
+
+- **Improved logging.py Robustness** (`src/utils/logging.py`)
+  - Added idempotency protection - `setup_logging()` now safe to call multiple times
+  - Added graceful degradation if ddtrace is not available (no more crashes)
+  - Added `is_logging_configured()` function to check configuration state
+  - Added `__all__` for explicit public API definition
+  - Added exception handling for `patch_all()` failures
+
+- **Centralized Logging in All Modules**
+  - Updated 14 files to use `from src.utils.logging import get_logger`
+  - Removed direct `import structlog` usage throughout codebase
+  - Files updated:
+    - `src/handlers/pr_webhook.py` - also fixed bound logger context usage
+    - `src/handlers/reliability_health.py`
+    - `src/services/context_manager.py`
+    - `src/services/idempotency_checker.py`
+    - `src/services/circuit_breaker.py`
+    - `src/services/azure_devops.py`
+    - `src/services/ai_client.py`
+    - `src/services/diff_parser.py`
+    - `src/services/response_cache.py`
+    - `src/services/feedback_tracker.py`
+    - `src/services/pattern_detector.py`
+    - `src/models/review_result.py`
+    - `src/utils/config.py`
+    - `src/utils/table_storage.py`
+    - `src/prompts/factory.py`
+
+- **Fixed Bound Logger Context Consistency** (`pr_webhook.py`)
+  - All logs in `handle_pr_event()` now use `request_logger` with bound pr_id/repository
+  - Ensures all logs within a request include proper context for tracing
+
+### Technical Details
+
+- **Files Modified**: 15 files
+- **Maintainability Impact**: Single source of truth for logging configuration
+- **Reliability Impact**: Graceful degradation when ddtrace unavailable
+- **Compatibility**: Fully backward compatible with v2.5.9
+
+---
+
 ## [2.5.9] - 2025-12-02
 
 ### Fixed - Handlers Module Security & Reliability
 
-- **Resource Leak in Context Manager** (`pr_webhook.py`) - HIGH
+- **Resource Leak in Context Manager** (`pr_webhook.py`)
   - Fixed resource leak when `AIClient().__aenter__()` raises exception
   - Added try/except wrapper to ensure `devops_client` cleanup on partial initialization
   - Prevents connection leaks on startup failures
 
-- **Missing Input Validation on `days` Parameter** (`reliability_health.py`) - HIGH
+- **Missing Input Validation on `days` Parameter** (`reliability_health.py`)
   - Added validation requiring integer between 1-365 for `get_idempotency_statistics()`
   - Returns standardized error response for invalid values
   - Prevents DoS via excessive date range queries
 
-- **Missing Input Validation on `repository` Parameter** (`reliability_health.py`) - HIGH
+- **Missing Input Validation on `repository` Parameter** (`reliability_health.py`)
   - Added regex validation: alphanumeric, dash, underscore, dot (max 500 chars)
   - Prevents injection attacks via malicious repository names
   - Returns standardized error response for invalid values
 
-- **Unsafe Table Operation Outside Try Block** (`pr_webhook.py`) - HIGH
+- **Unsafe Table Operation Outside Try Block** (`pr_webhook.py`)
   - Moved `ensure_table_exists('reviewhistory')` inside try block
   - Prevents unhandled crashes on table creation failure
 
-- **Missing File Path Length Validation** (`pr_webhook.py`) - MEDIUM
+- **Missing File Path Length Validation** (`pr_webhook.py`)
   - Added length check (max 2000 chars) matching FileChange model constraint
   - Returns `FileType.UNKNOWN` for excessively long paths
   - Prevents DoS via malicious long file paths
 
-- **Division by Zero Risk** (`reliability_health.py`) - MEDIUM
+- **Division by Zero Risk** (`reliability_health.py`)
   - Fixed `_assess_cache_health()` to check `active_entries > 0` before ratio calculation
   - Prevents potential division by zero when cache is empty
 
-- **Hardcoded Version String** (`reliability_health.py`) - MEDIUM
+- **Hardcoded Version String** (`reliability_health.py`)
   - Replaced hardcoded "2.2.0" with `__version__` import from config
   - Ensures version consistency across all endpoints
 
-- **Magic Number in Health Calculation** (`reliability_health.py`) - MEDIUM
+- **Magic Number in Health Calculation** (`reliability_health.py`)
   - Defined `HEALTH_SCORE_DEGRADED = 70` constant
   - Replaces hardcoded value for maintainability
 
-- **Float Precision in Logging** (`pr_webhook.py`) - LOW
+- **Float Precision in Logging** (`pr_webhook.py`)
   - Rounded `avg_per_file` to 2 decimal places in logging
   - Prevents excessively long float values in logs
 
-- **Inconsistent Error Response Format** (`reliability_health.py`) - LOW
+- **Inconsistent Error Response Format** (`reliability_health.py`)
   - Standardized all error responses to include `status`, `timestamp`, `error`, `error_type`
   - Ensures consistent API error format
 
@@ -66,57 +110,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed - Models Module Input Validation & Security
 
-- **Missing Field Length Limits** (`feedback.py`, `pr_event.py`, `reliability.py`, `review_result.py`) - HIGH
+- **Missing Field Length Limits** (`feedback.py`, `pr_event.py`, `reliability.py`, `review_result.py`)
   - Added `max_length` constraints to all string fields to prevent DoS attacks
   - Added `gt`/`lt` bounds to integer fields to prevent integer overflow
   - Examples: `PartitionKey: str = Field(..., max_length=1024)`, `pr_id: int = Field(..., gt=0, lt=2147483647)`
 
-- **Missing Input Validation** (`feedback.py`) - HIGH
+- **Missing Input Validation** (`feedback.py`)
   - Added `validate_severity()` validator to enforce valid severity values
   - Added proper datetime parsing with timezone validation in `from_table_entity()`
   - Added type checking for entity parameter
 
-- **Branch Reference Injection** (`pr_event.py`) - HIGH
+- **Branch Reference Injection** (`pr_event.py`)
   - Added `validate_branch_ref()` validator to prevent command injection
   - Checks for null bytes, newlines (log injection), and validates Azure DevOps format
   - Validates branch format: `refs/(heads|tags)/[\w\-\./_]+`
 
-- **Email Validation** (`pr_event.py`) - MEDIUM
+- **Email Validation** (`pr_event.py`)
   - Added `validate_email()` for basic email format validation
   - Normalizes to lowercase and strips whitespace
 
-- **PR Title Validation** (`pr_event.py`) - MEDIUM
+- **PR Title Validation** (`pr_event.py`)
   - Added `validate_title()` to reject empty/whitespace-only titles
   - Made `from_azure_devops_webhook()` stricter - raises ValueError for missing required fields
 
-- **Path Traversal in FileChange** (`pr_event.py`) - HIGH
+- **Path Traversal in FileChange** (`pr_event.py`)
   - Added `validate_file_path()` to check for null bytes and path traversal (`..`)
   - Mirrors validation from `review_result.py`
 
-- **JSON Field Validation** (`feedback.py`) - MEDIUM
+- **JSON Field Validation** (`feedback.py`)
   - Added `validate_json_field()` for `issue_types` and `files_reviewed` fields
   - Validates JSON structure and limits array size to 1000 items (DoS protection)
 
-- **Circuit Breaker State Validation** (`reliability.py`) - MEDIUM
+- **Circuit Breaker State Validation** (`reliability.py`)
   - Added `validate_state()` to enforce valid state values: CLOSED, OPEN, HALF_OPEN
   - Added `validate_partition_key()` to enforce YYYY-MM-DD date format
 
-- **Review Result JSON Validation** (`reliability.py`) - MEDIUM
+- **Review Result JSON Validation** (`reliability.py`)
   - Added `validate_review_json()` to ensure `review_result_json` contains valid JSON
 
-- **Text Sanitization** (`review_result.py`) - MEDIUM
+- **Text Sanitization** (`review_result.py`)
   - Added `sanitize_text_fields()` to remove null bytes and limit consecutive newlines
   - Prevents markdown injection in Azure DevOps comments
 
-- **Issues List Validation** (`review_result.py`) - HIGH
+- **Issues List Validation** (`review_result.py`)
   - Added `validate_issues_list()` to enforce `MAX_ISSUES_PER_REVIEW` limit
   - Auto-deduplicates issues based on file_path + line_number + issue_type
 
-- **Better Error Handling in Parsing** (`review_result.py`) - LOW
+- **Better Error Handling in Parsing** (`review_result.py`)
   - Changed exception catch from `Exception` to specific `(ValueError, TypeError)`
   - Added logging for invalid issues count
 
-- **Thread Safety Documentation** (`reliability.py`) - LOW
+- **Thread Safety Documentation** (`reliability.py`)
   - Added docstring clarification for `should_allow_request()` about TOCTOU race conditions
 
 ### Technical Details
@@ -205,23 +249,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed - Services Module Security & Reliability
 
-- **Circuit Breaker Deadlock Vulnerability** (`circuit_breaker.py`) - CRITICAL
+- **Circuit Breaker Deadlock Vulnerability** (`circuit_breaker.py`)
   - Converted manual lock acquire/release to context manager pattern
   - Used `asyncio.timeout()` for lock acquisition timeout
   - Separated state checking (under lock) from function execution (outside lock)
   - Prevents complete application deadlock
 
-- **Session Race Condition** (`azure_devops.py`) - CRITICAL
+- **Session Race Condition** (`azure_devops.py`)
   - Fixed TOCTOU race in `_get_session()` token refresh
   - Added proper session cleanup inside lock on failure
   - Implemented double-check pattern with explicit cleanup
 
-- **Memory Exhaustion Bug** (`pattern_detector.py`) - HIGH
+- **Memory Exhaustion Bug** (`pattern_detector.py`)
   - Moved safety limit check BEFORE appending to list
   - Check happens during iteration, preventing excess data load
   - Prevents OOM crashes before protection activates
 
-- **Path Traversal Vulnerability** (`response_cache.py`) - HIGH
+- **Path Traversal Vulnerability** (`response_cache.py`)
   - Added URL decoding before validation to prevent bypass
   - Check suspicious patterns in BOTH original and decoded paths
   - Added control character detection and path length limits
@@ -430,7 +474,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Type checking for ReviewResult instances
   - Logs skipped invalid results with counts
 
-### Fixed - Critical Issues
+### Fixed Issues
 
 - **CACHE_TTL_DAYS in Settings**
   - Added `CACHE_TTL_DAYS` to Settings class properly
@@ -483,8 +527,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Phase 2 Learning Context Integration**
   - AI prompts now include team preference context from historical feedback
-  - High-value issue types are prioritized (>70% acceptance rate)
-  - Low-value issue types are de-prioritized (<30% acceptance rate)
+ -value issue types are prioritized (>70% acceptance rate)
+ -value issue types are de-prioritized (<30% acceptance rate)
   - Requires minimum 5 feedback entries for statistical significance
   - Implemented in `prompts/factory.py:_build_learning_context_section()`
 
@@ -515,7 +559,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Prevents quota exhaustion from runaway processes
   - Class-level tracking in `ResponseCache`
 
-### Fixed - Critical Issues
+### Fixed Issues
 
 - **Removed Unused Anthropic SDK**
   - `anthropic==0.40.0` removed from requirements.txt
@@ -596,7 +640,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `cleanup_secret_manager()` called on application shutdown
   - Prevents credential resource leaks in long-running instances
 
-### Fixed - Critical Bug Fixes
+### Fixed Bug Fixes
 
 - **Circuit Breaker Infinite Wait** (Critical)
   - Added 30-second timeout on lock acquisition

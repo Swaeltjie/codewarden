@@ -14,12 +14,11 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.5.5 - Fixed session race condition, improved close() safety
+Version: 2.5.10 - Centralized logging usage
 """
 import aiohttp
 import asyncio
 from typing import Dict, List, Optional
-import structlog
 from functools import lru_cache
 from tenacity import (
     retry,
@@ -38,8 +37,9 @@ from src.utils.constants import (
     DEFAULT_RETRY_AFTER_SECONDS,
     MAX_COMMENT_LENGTH,
 )
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class DevOpsAuthError(Exception):

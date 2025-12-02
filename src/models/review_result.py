@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.5.8 - Added comprehensive input validation and DoS protection
+Version: 2.5.10 - Centralized logging usage
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -15,6 +15,10 @@ from datetime import datetime, timezone
 
 # Import constants for validation
 from src.utils.constants import MAX_ISSUES_PER_REVIEW, MAX_COMMENT_LENGTH
+from src.utils.logging import get_logger
+
+# Module-level logger for use in classmethods/staticmethods
+_logger = get_logger(__name__)
 
 
 class IssueSeverity(str, Enum):
@@ -291,9 +295,7 @@ class ReviewResult(BaseModel):
             except (ValueError, TypeError) as e:
                 # Log but don't fail - skip invalid issues
                 # Only catch specific validation errors, not all exceptions
-                import structlog
-                logger = structlog.get_logger(__name__)
-                logger.warning(
+                _logger.warning(
                     "invalid_issue_format",
                     issue_data=issue_data,
                     error=str(e)
@@ -302,9 +304,7 @@ class ReviewResult(BaseModel):
 
         # Log metrics about invalid issues
         if invalid_count > 0:
-            import structlog
-            logger = structlog.get_logger(__name__)
-            logger.warning(
+            _logger.warning(
                 "skipped_invalid_issues",
                 invalid_count=invalid_count,
                 valid_count=len(issues),
@@ -355,9 +355,6 @@ class ReviewResult(BaseModel):
         Returns:
             Aggregated ReviewResult
         """
-        import structlog
-        logger = structlog.get_logger(__name__)
-
         if not results:
             return cls.create_empty(pr_id, "No results to aggregate")
 
@@ -370,13 +367,13 @@ class ReviewResult(BaseModel):
                 skipped_count += 1
                 continue
             if not isinstance(result, ReviewResult):
-                logger.warning("aggregate_invalid_result_type", type=type(result).__name__)
+                _logger.warning("aggregate_invalid_result_type", type=type(result).__name__)
                 skipped_count += 1
                 continue
             valid_results.append(result)
 
         if skipped_count > 0:
-            logger.warning(
+            _logger.warning(
                 "aggregate_skipped_invalid_results",
                 skipped_count=skipped_count,
                 valid_count=len(valid_results)

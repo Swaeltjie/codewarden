@@ -4,9 +4,8 @@ Idempotency Checker
 
 Prevents duplicate PR review processing when webhooks are retried.
 
-Version: 2.3.0
+Version: 2.5.10 - Centralized logging usage
 """
-import structlog
 from typing import Optional, Dict
 from datetime import datetime, timezone
 
@@ -17,8 +16,9 @@ from src.utils.table_storage import (
     query_entities_paginated
 )
 from src.utils.config import get_settings
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class IdempotencyChecker:

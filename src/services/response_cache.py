@@ -4,9 +4,8 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.5.5 - Fixed path traversal vulnerability, improved lock init
+Version: 2.5.10 - Centralized logging usage
 """
-import structlog
 import json
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
@@ -25,8 +24,9 @@ from src.utils.constants import (
     CACHE_MAX_WRITES_PER_MINUTE,
     CACHE_TABLE_NAME,
 )
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ResponseCache:

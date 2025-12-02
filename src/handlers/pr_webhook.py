@@ -12,12 +12,11 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.5.9 - Fixed resource leak in __aenter__, added file path length validation, improved error handling
+Version: 2.5.10 - Centralized logging usage
 """
 import asyncio
 from typing import List, Optional, Tuple
 from datetime import datetime, timezone
-import structlog
 
 from src.models.pr_event import PREvent, FileChange, FileType
 from src.models.review_result import ReviewResult, ReviewIssue
@@ -32,8 +31,9 @@ from src.services.response_cache import ResponseCache
 from src.prompts.factory import PromptFactory
 from src.utils.config import get_settings
 from src.utils.table_storage import get_table_client, ensure_table_exists
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class PRWebhookHandler:
@@ -86,12 +86,13 @@ class PRWebhookHandler:
         """
         start_time = datetime.now(timezone.utc)
 
-        logger = structlog.get_logger(__name__).bind(
+        # Bind context to logger for this request
+        request_logger = logger.bind(
             pr_id=pr_event.pr_id,
             repository=pr_event.repository_name
         )
 
-        logger.info("pr_review_started")
+        request_logger.info("pr_review_started")
 
         try:
             # Step 0: Check for duplicate request (idempotency)
@@ -104,7 +105,7 @@ class PRWebhookHandler:
             )
 
             if is_duplicate:
-                logger.info(
+                request_logger.info(
                     "duplicate_request_ignored",
                     previous_result=previous_result
                 )
@@ -130,23 +131,23 @@ class PRWebhookHandler:
                 pr_id=pr_event.pr_id
             )
             
-            logger.info(
+            request_logger.info(
                 "pr_details_fetched",
                 title=pr_details.get('title'),
                 file_count=len(pr_details.get('files', []))
             )
-            
+
             # Step 2: Get changed files with diffs
             changed_files = await self._fetch_changed_files(pr_event, pr_details)
-            
+
             if not changed_files:
-                logger.info("no_iac_files_found")
+                request_logger.info("no_iac_files_found")
                 return ReviewResult.create_empty(
                     pr_id=pr_event.pr_id,
                     message="No IaC files found in this PR"
                 )
             
-            logger.info(
+            request_logger.info(
                 "changed_files_classified",
                 total_files=len(changed_files),
                 terraform=sum(1 for f in changed_files if f.file_type == FileType.TERRAFORM),
@@ -165,16 +166,16 @@ class PRWebhookHandler:
                 for section in file.changed_sections
             )
             
-            logger.info(
+            request_logger.info(
                 "diffs_parsed",
                 total_changed_lines=total_changed_lines,
                 avg_per_file=round(total_changed_lines / len(changed_files), 2) if changed_files else 0
             )
-            
+
             # Step 4: Determine review strategy
             strategy = self.context_manager.determine_strategy(changed_files)
-            
-            logger.info("review_strategy_determined", strategy=strategy.value)
+
+            request_logger.info("review_strategy_determined", strategy=strategy.value)
             
             # Step 5: Get learning context (feedback from past reviews)
             learning_context = await self.feedback_tracker.get_learning_context(
@@ -205,7 +206,7 @@ class PRWebhookHandler:
             # Step 8: Save review history for pattern detection
             await self._save_review_history(pr_event, pr_details, review_result, strategy)
 
-            logger.info(
+            request_logger.info(
                 "pr_review_completed",
                 duration_seconds=duration,
                 issues_found=len(review_result.issues),
@@ -234,13 +235,13 @@ class PRWebhookHandler:
                     result_summary=f"FAILED: {type(e).__name__}: {str(e)[:100]}"
                 )
             except Exception as update_error:
-                logger.warning(
+                request_logger.warning(
                     "idempotency_update_failed_after_error",
                     error=str(update_error),
                     original_error=str(e)
                 )
 
-            logger.exception(
+            request_logger.exception(
                 "pr_review_failed",
                 error=str(e),
                 error_type=type(e).__name__

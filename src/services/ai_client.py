@@ -6,13 +6,12 @@ Handles interactions with OpenAI API for code review analysis.
 Includes retry logic, rate limiting, structured response parsing,
 and circuit breaker protection.
 
-Version: 2.5.5 - Fixed resource leak in close(), added proper cleanup
+Version: 2.5.10 - Centralized logging usage
 """
 import asyncio
 from openai import AsyncOpenAI
 from typing import Optional, Dict, List
 import json
-import structlog
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -34,8 +33,9 @@ from src.utils.constants import (
     COST_PER_1K_PROMPT_TOKENS,
     COST_PER_1K_COMPLETION_TOKENS,
 )
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class AIClient:

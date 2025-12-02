@@ -5,14 +5,15 @@ Git Diff Parser with Diff-Only Analysis
 Parses git diffs to extract only changed sections, dramatically reducing
 token usage and improving review focus.
 
-Version: 2.5.5 - Added DoS protection with hunk size limits
+Version: 2.5.10 - Centralized logging usage
 """
 from typing import List, Optional
 from dataclasses import dataclass
-import structlog
 import unidiff
 
-logger = structlog.get_logger(__name__)
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass

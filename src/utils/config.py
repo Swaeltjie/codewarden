@@ -4,25 +4,25 @@ Configuration Management
 
 Handles application settings and Azure Key Vault integration for secrets.
 
-Version: 2.5.0 - Added CACHE_TTL_DAYS, MAX_CONCURRENT_REVIEWS settings
+Version: 2.5.10 - Centralized logging usage
 """
 from pydantic_settings import BaseSettings
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from functools import lru_cache
 from typing import Optional
-import structlog
 
 from src.utils.constants import (
     DEFAULT_MAX_TOKENS,
     CACHE_TTL_DAYS as DEFAULT_CACHE_TTL_DAYS,
     AZURE_DEVOPS_TIMEOUT,
 )
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 # Application version - single source of truth
-__version__ = "2.5.9"
+__version__ = "2.5.10"
 
 
 class Settings(BaseSettings):

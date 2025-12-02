@@ -4,15 +4,40 @@ Logging Configuration for Datadog
 
 Configures structured logging with Datadog integration using ddtrace.
 
-Version: 2.5.7 - Added get_logger() convenience function for centralized imports
+Version: 2.5.10 - Improved robustness: idempotency, exception handling, explicit API
 """
 import logging
 import structlog
-from ddtrace import tracer, patch_all
 import sys
+from typing import Optional
+
+# Explicit public API
+__all__ = ['setup_logging', 'get_logger', 'get_correlation_id_from_context', 'is_logging_configured']
+
+# Module-level state to track configuration
+_logging_configured = False
+_ddtrace_available = False
+
+# Try to import ddtrace - graceful degradation if not available
+try:
+    from ddtrace import tracer, patch_all
+    _ddtrace_available = True
+except ImportError:
+    tracer = None
+    patch_all = None
 
 
-def setup_logging(log_level: str = "INFO"):
+def is_logging_configured() -> bool:
+    """
+    Check if logging has been configured.
+
+    Returns:
+        True if setup_logging() has been called successfully
+    """
+    return _logging_configured
+
+
+def setup_logging(log_level: str = "INFO", force: bool = False):
     """
     Configure structured logging with Datadog integration.
 
@@ -24,13 +49,21 @@ def setup_logging(log_level: str = "INFO"):
     - Automatic correlation IDs
     - Context binding (pr_id, repository, etc.)
     - Integrates with Datadog APM via ddtrace
+    - Idempotent - safe to call multiple times
 
     Args:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        force: If True, reconfigure even if already configured
 
     Raises:
         ValueError: If log_level is not a valid logging level
     """
+    global _logging_configured
+
+    # Idempotency check - don't reconfigure unless forced
+    if _logging_configured and not force:
+        return
+
     # Validate log level before use
     valid_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
     log_level_upper = log_level.upper()
@@ -41,9 +74,14 @@ def setup_logging(log_level: str = "INFO"):
             f"Must be one of: {', '.join(sorted(valid_levels))}"
         )
 
-    # Enable Datadog auto-instrumentation
-    # This automatically traces HTTP requests, database calls, etc.
-    patch_all()
+    # Enable Datadog auto-instrumentation if available
+    # Graceful degradation if ddtrace is not installed
+    if _ddtrace_available and patch_all is not None:
+        try:
+            patch_all()
+        except Exception:
+            # Don't fail logging setup if ddtrace patching fails
+            pass
 
     # Configure structlog processors
     processors = [
@@ -75,25 +113,28 @@ def setup_logging(log_level: str = "INFO"):
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level_upper))
 
-    # Remove default handlers
+    # Remove default handlers (prevents duplicate logs)
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
     # Add stdout handler (Azure Functions reads from stdout)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(getattr(logging, log_level_upper))
-    
+
     # Simple format for standard logging (structlog handles formatting)
     handler.setFormatter(logging.Formatter('%(message)s'))
-    
+
     root_logger.addHandler(handler)
-    
+
+    # Mark as configured
+    _logging_configured = True
+
     # Log configuration success
     logger = structlog.get_logger(__name__)
     logger.info(
         "logging_configured",
         log_level=log_level_upper,
-        datadog_enabled=True,
+        datadog_enabled=_ddtrace_available,
         structured=True
     )
 
@@ -103,11 +144,19 @@ def get_correlation_id_from_context() -> str:
     Get current correlation ID from Datadog trace context.
 
     Returns:
-        Correlation ID (trace ID from Datadog)
+        Correlation ID (trace ID from Datadog), or "no-trace" if unavailable
     """
-    span = tracer.current_span()
-    if span:
-        return str(span.trace_id)
+    if not _ddtrace_available or tracer is None:
+        return "no-trace"
+
+    try:
+        span = tracer.current_span()
+        if span:
+            return str(span.trace_id)
+    except Exception:
+        # Don't fail if trace context retrieval fails
+        pass
+
     return "no-trace"
 
 

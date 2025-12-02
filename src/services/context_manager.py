@@ -4,15 +4,15 @@ Context Manager for Review Strategy Selection
 
 Determines which review strategy to use based on PR size and complexity.
 
-Version: 1.0.0 (Simplified MVP)
+Version: 2.5.10 - Centralized logging usage
 """
 from enum import Enum
 from typing import List
-import structlog
 
 from src.models.pr_event import FileChange, FileType
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ReviewStrategy(str, Enum):
