@@ -4,7 +4,7 @@ Configuration Management
 
 Handles application settings and Azure Key Vault integration for secrets.
 
-Version: 2.5.11 - Centralized constants usage
+Version: 2.5.12 - Comprehensive type hints
 """
 from pydantic_settings import BaseSettings
 from azure.identity import DefaultAzureCredential
@@ -22,7 +22,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Application version - single source of truth
-__version__ = "2.5.11"
+__version__ = "2.5.12"
 
 
 class Settings(BaseSettings):
@@ -87,7 +87,7 @@ class SecretManager:
     Implements in-memory caching for performance.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize Secret Manager with Managed Identity."""
         settings = get_settings()
 
@@ -100,7 +100,7 @@ class SecretManager:
             credential=self._credential
         )
 
-        self._cache = {}
+        self._cache: dict[str, str] = {}
 
         logger.info(
             "secret_manager_initialized",
@@ -152,22 +152,22 @@ class SecretManager:
             )
             raise
     
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """Clear the secret cache."""
         self._cache.clear()
         logger.info("secret_cache_cleared")
 
-    def close(self):
+    def close(self) -> None:
         """Close the credential to prevent resource leaks."""
         if hasattr(self, '_credential') and self._credential:
             self._credential.close()
             logger.info("secret_manager_credential_closed")
 
-    def __enter__(self):
+    def __enter__(self) -> "SecretManager":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Context manager exit - ensure cleanup."""
         self.close()
         return False
@@ -198,7 +198,7 @@ def get_secret_manager() -> SecretManager:
     return _secret_manager_instance
 
 
-def cleanup_secret_manager():
+def cleanup_secret_manager() -> None:
     """
     Clean up the global secret manager instance.
 

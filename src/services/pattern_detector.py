@@ -4,7 +4,7 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.5.11 - Centralized constants usage
+Version: 2.5.12 - Comprehensive type hints
 """
 import json
 from typing import List, Dict, Tuple, Optional
@@ -85,10 +85,10 @@ class PatternDetector:
     - Metrics/observability support (v2.5.0)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize pattern detector."""
         self.settings = get_settings()
-        self._closed = False
+        self._closed: bool = False
         self._last_metrics: Optional[PatternDetectorMetrics] = None
         logger.info("pattern_detector_initialized")
 
@@ -97,16 +97,16 @@ class PatternDetector:
         """Get metrics from last analysis run."""
         return self._last_metrics
 
-    async def close(self):
+    async def close(self) -> None:
         """Close resources."""
         self._closed = True
         logger.debug("pattern_detector_closed")
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "PatternDetector":
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit - cleanup resources."""
         await self.close()
         return False

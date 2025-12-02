@@ -4,10 +4,10 @@ Context Manager for Review Strategy Selection
 
 Determines which review strategy to use based on PR size and complexity.
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.5.12 - Comprehensive type hints
 """
 from enum import Enum
-from typing import List
+from typing import Dict, List
 
 from src.models.pr_event import FileChange, FileType
 from src.utils.logging import get_logger
@@ -29,9 +29,9 @@ class ContextManager:
     Simplified version for MVP - uses basic file count heuristics.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         # Token estimates per file type (average)
-        self.token_estimates = {
+        self.token_estimates: Dict[FileType, int] = {
             FileType.TERRAFORM: 300,
             FileType.ANSIBLE: 400,
             FileType.PIPELINE: 350,

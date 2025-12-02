@@ -4,7 +4,7 @@ Logging Configuration for Datadog
 
 Configures structured logging with Datadog integration using ddtrace.
 
-Version: 2.5.10 - Improved robustness: idempotency, exception handling, explicit API
+Version: 2.5.12 - Comprehensive type hints
 """
 import logging
 import structlog
@@ -37,7 +37,7 @@ def is_logging_configured() -> bool:
     return _logging_configured
 
 
-def setup_logging(log_level: str = "INFO", force: bool = False):
+def setup_logging(log_level: str = "INFO", force: bool = False) -> None:
     """
     Configure structured logging with Datadog integration.
 
@@ -160,7 +160,7 @@ def get_correlation_id_from_context() -> str:
     return "no-trace"
 
 
-def get_logger(name: str):
+def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """
     Get a configured structlog logger.
 

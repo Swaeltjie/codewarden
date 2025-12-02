@@ -5,7 +5,7 @@ Git Diff Parser with Diff-Only Analysis
 Parses git diffs to extract only changed sections, dramatically reducing
 token usage and improving review focus.
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.5.12 - Comprehensive type hints
 """
 from typing import List, Optional
 from dataclasses import dataclass
@@ -66,14 +66,14 @@ class DiffParser:
     50-85% compared to reviewing entire files.
     """
     
-    def __init__(self, context_lines: int = 3):
+    def __init__(self, context_lines: int = 3) -> None:
         """
         Initialize diff parser.
-        
+
         Args:
             context_lines: Number of context lines before/after changes
         """
-        self.context_lines = context_lines
+        self.context_lines: int = context_lines
     
     async def parse_diff(self, diff_content: str) -> List[ChangedSection]:
         """
@@ -323,7 +323,7 @@ class DiffParser:
 
 
 # Example usage and testing
-async def example_usage():
+async def example_usage() -> None:
     """Example of how to use DiffParser."""
     
     sample_diff = """

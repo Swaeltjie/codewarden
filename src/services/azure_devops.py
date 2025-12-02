@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.5.11 - Centralized constants usage
+Version: 2.5.12 - Comprehensive type hints
 """
 import aiohttp
 import asyncio
@@ -70,7 +70,7 @@ class AzureDevOpsClient:
     # Azure DevOps resource ID for Azure AD authentication
     AZURE_DEVOPS_RESOURCE = "https://app.vssps.visualstudio.com/.default"
 
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initialize Azure DevOps client with Managed Identity authentication.
 
@@ -80,8 +80,8 @@ class AzureDevOpsClient:
         - Project permissions: Code (Read), PR Threads (Contribute)
         """
         self.settings = get_settings()
-        self.base_url = f"https://dev.azure.com/{self.settings.AZURE_DEVOPS_ORG}"
-        self.api_version = "7.1"
+        self.base_url: str = f"https://dev.azure.com/{self.settings.AZURE_DEVOPS_ORG}"
+        self.api_version: str = "7.1"
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
         self._credential: Optional[DefaultAzureCredential] = None
@@ -857,7 +857,7 @@ class AzureDevOpsClient:
             # Return empty list on error - don't fail feedback collection
             return []
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the HTTP session and credential."""
         # Use lock to prevent concurrent close calls
         async with self._session_lock:
@@ -878,12 +878,12 @@ class AzureDevOpsClient:
                     logger.warning("devops_credential_close_error", error=str(e))
                 finally:
                     self._credential = None
-    
-    async def __aenter__(self):
+
+    async def __aenter__(self) -> "AzureDevOpsClient":
         """Async context manager entry."""
         return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit."""
         await self.close()
         return False  # Don't suppress exceptions

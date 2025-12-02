@@ -4,26 +4,26 @@ Comment Formatter for Azure DevOps
 
 Formats review results as markdown comments for Azure DevOps PRs.
 
-Version: 1.0.0
+Version: 2.5.12 - Comprehensive type hints
 """
 from src.models.review_result import ReviewResult, ReviewIssue, IssueSeverity
-from typing import List
+from typing import Dict, List
 
 
 class CommentFormatter:
     """Formats review results as markdown for Azure DevOps."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         # Emoji/icon mapping for severity levels
-        self.severity_icons = {
+        self.severity_icons: Dict[IssueSeverity, str] = {
             IssueSeverity.CRITICAL: "🔴",
             IssueSeverity.HIGH: "🟠",
             IssueSeverity.MEDIUM: "🟡",
             IssueSeverity.LOW: "🔵",
             IssueSeverity.INFO: "ℹ️"
         }
-        
-        self.recommendation_icons = {
+
+        self.recommendation_icons: Dict[str, str] = {
             "approve": "✅",
             "request_changes": "❌",
             "comment": "💬"

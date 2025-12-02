@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.5.12 - Comprehensive type hints
 """
 import asyncio
 from typing import List, Optional, Tuple
@@ -39,22 +39,22 @@ logger = get_logger(__name__)
 class PRWebhookHandler:
     """Handles incoming PR webhook events and orchestrates reviews."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.settings = get_settings()
-        self.devops_client = None
-        self.ai_client = None
+        self.devops_client: Optional[AzureDevOpsClient] = None
+        self.ai_client: Optional[AIClient] = None
         self.diff_parser = DiffParser()
         self.feedback_tracker = FeedbackTracker()
         self.context_manager = ContextManager()
         self.prompt_factory = PromptFactory()
         self.idempotency_checker = IdempotencyChecker()
         self.response_cache = ResponseCache()  # Uses configurable TTL from settings
-        self.dry_run = False  # When True, skips posting comments to Azure DevOps
+        self.dry_run: bool = False  # When True, skips posting comments to Azure DevOps
 
         # Concurrency limiter for parallel operations (v2.5.0)
         self._review_semaphore = asyncio.Semaphore(self.settings.MAX_CONCURRENT_REVIEWS)
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "PRWebhookHandler":
         """Async context manager entry - initialize resources."""
         try:
             self.devops_client = await AzureDevOpsClient().__aenter__()
@@ -66,7 +66,7 @@ class PRWebhookHandler:
                 await self.devops_client.close()
             raise
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit - cleanup resources."""
         if self.devops_client:
             await self.devops_client.close()

@@ -7,7 +7,7 @@ Provides health and metrics endpoints for monitoring reliability features:
 - Response cache statistics
 - Idempotency statistics
 
-Version: 2.5.11 - Centralized constants usage
+Version: 2.5.12 - Comprehensive type hints
 """
 from datetime import datetime, timezone
 from typing import Dict, Any
@@ -42,7 +42,7 @@ class ReliabilityHealthHandler:
     - Idempotency duplicate detection rates
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize reliability health handler."""
         self.response_cache = ResponseCache()
         self.idempotency_checker = IdempotencyChecker()

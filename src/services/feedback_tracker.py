@@ -4,7 +4,7 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.5.11 - Centralized constants usage
+Version: 2.5.12 - Comprehensive type hints
 """
 import uuid
 import json
@@ -45,10 +45,10 @@ class FeedbackTracker:
     - Adjusts review focus based on team preferences
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize feedback tracker."""
         self.settings = get_settings()
-        self.devops_client = None
+        self.devops_client: Optional[AzureDevOpsClient] = None
         logger.info("feedback_tracker_initialized")
 
     async def _get_devops_client(self) -> AzureDevOpsClient:
@@ -57,18 +57,18 @@ class FeedbackTracker:
             self.devops_client = AzureDevOpsClient()
         return self.devops_client
 
-    async def close(self):
+    async def close(self) -> None:
         """Close resources."""
         if self.devops_client:
             await self.devops_client.close()
             self.devops_client = None
         logger.debug("feedback_tracker_closed")
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "FeedbackTracker":
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit - cleanup resources."""
         await self.close()
         return False

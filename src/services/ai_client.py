@@ -6,7 +6,7 @@ Handles interactions with OpenAI API for code review analysis.
 Includes retry logic, rate limiting, structured response parsing,
 and circuit breaker protection.
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.5.12 - Comprehensive type hints
 """
 import asyncio
 from openai import AsyncOpenAI
@@ -41,11 +41,11 @@ logger = get_logger(__name__)
 class AIClient:
     """Client for Azure AI Foundry / OpenAI API code reviews with retry logic."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.secret_manager = get_secret_manager()
         self.settings = get_settings()
         self._client: Optional[AsyncOpenAI] = None
-        self.use_azure = bool(self.settings.AZURE_AI_ENDPOINT)
+        self.use_azure: bool = bool(self.settings.AZURE_AI_ENDPOINT)
     
     @property
     def client(self) -> AsyncOpenAI:
@@ -378,7 +378,7 @@ class AIClient:
             logger.warning("token_counting_failed", error=str(e), fallback_to_approximation=True)
             return len(text) // 4
     
-    async def close(self):
+    async def close(self) -> None:
         """Close the OpenAI client."""
         if self._client:
             try:
@@ -388,12 +388,12 @@ class AIClient:
                 logger.warning("ai_client_close_error", error=str(e))
             finally:
                 self._client = None
-    
-    async def __aenter__(self):
+
+    async def __aenter__(self) -> "AIClient":
         """Async context manager entry."""
         return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
         """Async context manager exit."""
         await self.close()
         return False  # Don't suppress exceptions

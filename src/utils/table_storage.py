@@ -4,12 +4,12 @@ Azure Table Storage Utilities
 
 Helper functions for interacting with Azure Table Storage using Managed Identity.
 
-Version: 2.5.7 - Centralized constants and logging usage
+Version: 2.5.12 - Comprehensive type hints
 """
 from azure.data.tables import TableServiceClient, TableClient
 from azure.identity import DefaultAzureCredential
 from azure.core.exceptions import ResourceExistsError, ServiceRequestError
-from typing import Optional
+from typing import Generator, Optional
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -72,7 +72,7 @@ class TableServiceClientManager:
     _credential: Optional[DefaultAzureCredential] = None
     _client: Optional[TableServiceClient] = None
 
-    def __new__(cls):
+    def __new__(cls) -> "TableServiceClientManager":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -114,7 +114,7 @@ class TableServiceClientManager:
 
         return self._client
 
-    def close(self):
+    def close(self) -> None:
         """Close credential and client to prevent resource leaks."""
         if self._credential:
             self._credential.close()
@@ -164,7 +164,7 @@ def get_table_client(table_name: str) -> TableClient:
     retry=retry_if_exception_type(ServiceRequestError),
     reraise=True
 )
-def ensure_table_exists(table_name: str):
+def ensure_table_exists(table_name: str) -> None:
     """
     Create table if it doesn't exist with automatic retry on transient errors.
 
@@ -199,7 +199,7 @@ def ensure_table_exists(table_name: str):
         ) from e
 
 
-def ensure_all_tables_exist():
+def ensure_all_tables_exist() -> None:
     """
     Ensure all required tables exist.
 
@@ -239,7 +239,11 @@ def ensure_all_tables_exist():
     )
 
 
-def query_entities_paginated(table_client, query_filter: Optional[str] = None, page_size: int = TABLE_STORAGE_BATCH_SIZE):
+def query_entities_paginated(
+    table_client: TableClient,
+    query_filter: Optional[str] = None,
+    page_size: int = TABLE_STORAGE_BATCH_SIZE
+) -> Generator[dict, None, None]:
     """
     Query entities with pagination to avoid loading all results into memory.
 
@@ -268,7 +272,7 @@ def query_entities_paginated(table_client, query_filter: Optional[str] = None, p
             yield entity
 
 
-def cleanup_table_storage():
+def cleanup_table_storage() -> None:
     """
     Cleanup table storage resources.
 

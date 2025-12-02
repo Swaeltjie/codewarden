@@ -4,7 +4,7 @@ Prompt Factory for AI Code Reviews
 
 Generates specialized prompts for different file types and review strategies.
 
-Version: 2.5.11 - Centralized constants usage
+Version: 2.5.12 - Comprehensive type hints
 """
 from typing import List, Dict, Optional
 import re
@@ -39,7 +39,7 @@ class PromptFactory:
     MAX_MESSAGE_LENGTH = PROMPT_MAX_MESSAGE_LENGTH
     MAX_ISSUE_TYPE_LENGTH = PROMPT_MAX_ISSUE_TYPE_LENGTH
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.diff_parser = DiffParser()
 
     @staticmethod

@@ -5,6 +5,49 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.12] - 2025-12-02
+
+### Changed - Comprehensive Type Hints Throughout Codebase
+
+- **Added Type Hints to All Functions and Methods**
+  - All `__init__` methods now return `-> None`
+  - All `close` methods now return `-> None`
+  - All `__aenter__` methods now return `-> "ClassName"`
+  - All `__aexit__` methods now return `-> bool`
+  - All standalone functions have explicit return types
+
+- **Added Type Annotations to Class Attributes**
+  - Instance variables now have explicit type annotations
+  - Examples: `self.devops_client: Optional[AzureDevOpsClient] = None`
+  - Dict types include key/value types: `Dict[str, str]`, `Dict[FileType, int]`
+
+- **Files Updated** (17 files):
+  - `src/handlers/pr_webhook.py`
+  - `src/handlers/reliability_health.py`
+  - `src/services/ai_client.py`
+  - `src/services/azure_devops.py`
+  - `src/services/context_manager.py`
+  - `src/services/comment_formatter.py`
+  - `src/services/response_cache.py`
+  - `src/services/idempotency_checker.py`
+  - `src/services/feedback_tracker.py`
+  - `src/services/pattern_detector.py`
+  - `src/services/diff_parser.py`
+  - `src/prompts/factory.py`
+  - `src/utils/config.py`
+  - `src/utils/table_storage.py`
+  - `src/utils/logging.py`
+  - `src/utils/constants.py`
+
+### Technical Details
+
+- **Type Coverage**: All public functions now have complete type annotations
+- **IDE Support**: Improved autocomplete and error detection
+- **Documentation**: Types serve as inline documentation
+- **Compatibility**: Fully backward compatible with v2.5.11
+
+---
+
 ## [2.5.11] - 2025-12-02
 
 ### Changed - Centralized Constants Usage & Documentation

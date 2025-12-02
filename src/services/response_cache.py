@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.5.11 - Centralized constants usage
+Version: 2.5.12 - Comprehensive type hints
 """
 import json
 from typing import Optional, Dict, Any
@@ -50,7 +50,7 @@ class ResponseCache:
     _write_lock = None  # Will be initialized on first use (using asyncio.Lock for async safety)
     _lock_init_lock = None  # Lock for initializing the main lock (prevents race on initialization)
 
-    def __init__(self, ttl_days: int = None):
+    def __init__(self, ttl_days: Optional[int] = None) -> None:
         """
         Initialize response cache.
 
@@ -58,7 +58,7 @@ class ResponseCache:
             ttl_days: Time-to-live in days (default from Settings.CACHE_TTL_DAYS)
         """
         self.settings = get_settings()
-        self.table_name = CACHE_TABLE_NAME
+        self.table_name: str = CACHE_TABLE_NAME
 
         # Use provided TTL, or use settings value, or use default
         if ttl_days is not None:

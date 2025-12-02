@@ -4,7 +4,7 @@ Idempotency Checker
 
 Prevents duplicate PR review processing when webhooks are retried.
 
-Version: 2.5.11 - Centralized constants usage
+Version: 2.5.12 - Comprehensive type hints
 """
 from typing import Optional, Dict
 from datetime import datetime, timezone
@@ -33,10 +33,10 @@ class IdempotencyChecker:
     - Handles webhook retries gracefully
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize idempotency checker."""
         self.settings = get_settings()
-        self.table_name = 'idempotency'
+        self.table_name: str = 'idempotency'
         logger.info("idempotency_checker_initialized")
 
     async def is_duplicate_request(
