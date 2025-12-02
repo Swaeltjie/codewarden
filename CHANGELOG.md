@@ -5,6 +5,36 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2025-12-02
+
+### Fixed - Security & Concurrency Issues
+
+- **Race Condition in Rate Limiter** (`function_app.py`)
+  - `get_remaining()` method now properly acquires async lock before accessing shared state
+  - Prevents incorrect rate limit calculations under concurrent requests
+
+- **Race Condition in Cache Write Rate Limiter** (`response_cache.py`)
+  - Added `threading.Lock` to protect class-level `_write_timestamps` list
+  - Prevents race conditions when multiple cache instances check/update write limits
+
+- **Path Traversal Edge Cases** (`pr_webhook.py`, `response_cache.py`)
+  - Added empty/None path validation at start of `_is_safe_path()`
+  - Moved suspicious pattern checks BEFORE normalization to prevent bypass
+  - Added explicit check for paths starting with ".." after normalization
+  - Added type checking to ensure path is a string
+
+- **Context Manager Protocol** (`azure_devops.py`, `ai_client.py`)
+  - Added explicit `return False` in `__aexit__` methods
+  - Ensures exceptions are never inadvertently suppressed
+
+### Technical Details
+
+- **Files Modified**: 5 files, +91/-50 lines
+- **Security Impact**: Closes path traversal edge cases, fixes race conditions
+- **Compatibility**: Fully backward compatible with v2.5.0
+
+---
+
 ## [2.5.0] - 2025-12-01
 
 ### Documentation Updates
