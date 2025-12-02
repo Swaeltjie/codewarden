@@ -405,12 +405,31 @@ class PRWebhookHandler:
         import os
         from pathlib import Path
 
+        # Check for empty path
+        if not file_path or not isinstance(file_path, str):
+            return False
+
         # Check for null bytes
         if '\x00' in file_path:
             return False
 
         # Check for absolute paths (should be relative)
         if os.path.isabs(file_path):
+            return False
+
+        # Check for suspicious patterns BEFORE normalization
+        # This prevents bypassing checks with encoded paths
+        suspicious_patterns = [
+            '../',
+            '..\\',
+            '/etc/',
+            '/proc/',
+            'c:\\',
+            '\\windows\\',
+        ]
+
+        path_lower = file_path.lower()
+        if any(pattern in path_lower for pattern in suspicious_patterns):
             return False
 
         # Normalize the path and check for traversal
@@ -425,21 +444,12 @@ class PRWebhookHandler:
             if normalized.startswith(('/', '\\')):
                 return False
 
+            # Additional check: ensure normalized path doesn't escape current directory
+            # by checking that it doesn't start with parent directory references
+            if normalized.startswith('..'):
+                return False
+
         except (ValueError, OSError):
-            return False
-
-        # Check for suspicious patterns
-        suspicious_patterns = [
-            '../',
-            '..\\',
-            '/etc/',
-            '/proc/',
-            'c:\\',
-            '\\windows\\',
-        ]
-
-        path_lower = file_path.lower()
-        if any(pattern in path_lower for pattern in suspicious_patterns):
             return False
 
         return True

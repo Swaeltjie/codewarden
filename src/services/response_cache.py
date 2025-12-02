@@ -40,9 +40,10 @@ class ResponseCache:
     # Fallback default TTL (used if settings not available)
     DEFAULT_TTL_DAYS = 3
 
-    # Storage rate limiting - max writes per minute
+    # Storage rate limiting - max writes per minute (class-level shared across instances)
     MAX_WRITES_PER_MINUTE = 100
     _write_timestamps: list = []
+    _write_lock = None  # Will be initialized on first use
 
     def __init__(self, ttl_days: int = None):
         """
@@ -67,30 +68,39 @@ class ResponseCache:
         """
         Check if write rate limit is exceeded.
 
+        Uses synchronous locking for thread-safe rate limiting.
+
         Returns:
             True if write is allowed, False if rate limited
         """
+        import threading
+
+        # Initialize lock on first use (lazy initialization)
+        if ResponseCache._write_lock is None:
+            ResponseCache._write_lock = threading.Lock()
+
         now = datetime.now(timezone.utc).timestamp()
         window_start = now - 60  # 1 minute window
 
-        # Clean old timestamps
-        ResponseCache._write_timestamps = [
-            ts for ts in ResponseCache._write_timestamps
-            if ts > window_start
-        ]
+        with ResponseCache._write_lock:
+            # Clean old timestamps
+            ResponseCache._write_timestamps = [
+                ts for ts in ResponseCache._write_timestamps
+                if ts > window_start
+            ]
 
-        # Check rate limit
-        if len(ResponseCache._write_timestamps) >= self.MAX_WRITES_PER_MINUTE:
-            logger.warning(
-                "storage_write_rate_limited",
-                writes_in_window=len(ResponseCache._write_timestamps),
-                max_allowed=self.MAX_WRITES_PER_MINUTE
-            )
-            return False
+            # Check rate limit
+            if len(ResponseCache._write_timestamps) >= self.MAX_WRITES_PER_MINUTE:
+                logger.warning(
+                    "storage_write_rate_limited",
+                    writes_in_window=len(ResponseCache._write_timestamps),
+                    max_allowed=self.MAX_WRITES_PER_MINUTE
+                )
+                return False
 
-        # Record this write
-        ResponseCache._write_timestamps.append(now)
-        return True
+            # Record this write
+            ResponseCache._write_timestamps.append(now)
+            return True
 
     def _is_safe_file_path(self, file_path: str) -> bool:
         """
@@ -105,12 +115,31 @@ class ResponseCache:
         import os
         from pathlib import Path
 
+        # Check for empty path
+        if not file_path or not isinstance(file_path, str):
+            return False
+
         # Check for null bytes
         if '\x00' in file_path:
             return False
 
         # Check for absolute paths (should be relative)
         if os.path.isabs(file_path):
+            return False
+
+        # Check for suspicious patterns BEFORE normalization
+        # This prevents bypassing checks with encoded paths
+        suspicious_patterns = [
+            '../',
+            '..\\',
+            '/etc/',
+            '/proc/',
+            'c:\\',
+            '\\windows\\',
+        ]
+
+        path_lower = file_path.lower()
+        if any(pattern in path_lower for pattern in suspicious_patterns):
             return False
 
         # Normalize the path and check for traversal
@@ -125,21 +154,12 @@ class ResponseCache:
             if normalized.startswith(('/', '\\')):
                 return False
 
+            # Additional check: ensure normalized path doesn't escape current directory
+            # by checking that it doesn't start with parent directory references
+            if normalized.startswith('..'):
+                return False
+
         except (ValueError, OSError):
-            return False
-
-        # Check for suspicious patterns
-        suspicious_patterns = [
-            '../',
-            '..\\',
-            '/etc/',
-            '/proc/',
-            'c:\\',
-            '\\windows\\',
-        ]
-
-        path_lower = file_path.lower()
-        if any(pattern in path_lower for pattern in suspicious_patterns):
             return False
 
         return True

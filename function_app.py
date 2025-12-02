@@ -801,11 +801,20 @@ class RateLimiter:
             self._requests[client_id].append(now)
             return False
 
-    def get_remaining(self, client_id: str) -> int:
-        """Get remaining requests for client."""
-        if client_id not in self._requests:
-            return self.max_requests
-        return max(0, self.max_requests - len(self._requests.get(client_id, [])))
+    async def get_remaining(self, client_id: str) -> int:
+        """
+        Get remaining requests for client.
+
+        Args:
+            client_id: Unique client identifier
+
+        Returns:
+            Number of remaining requests in current window
+        """
+        async with self._lock:
+            if client_id not in self._requests:
+                return self.max_requests
+            return max(0, self.max_requests - len(self._requests.get(client_id, [])))
 
 
 # Global rate limiter instance (100 requests per minute per IP)
