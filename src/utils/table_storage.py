@@ -4,7 +4,7 @@ Azure Table Storage Utilities
 
 Helper functions for interacting with Azure Table Storage using Managed Identity.
 
-Version: 2.3.0 - Fixed resource leak, added retry logic, pagination
+Version: 2.5.4 - Fixed async/sync cleanup mismatch
 """
 from azure.data.tables import TableServiceClient, TableClient
 from azure.identity import DefaultAzureCredential
@@ -267,11 +267,14 @@ def query_entities_paginated(table_client, query_filter: Optional[str] = None, p
             yield entity
 
 
-async def cleanup_table_storage():
+def cleanup_table_storage():
     """
     Cleanup table storage resources.
 
     Call this on application shutdown to prevent resource leaks.
+
+    Note: This is a synchronous function that can be called from
+    synchronous contexts like atexit handlers.
     """
     _manager.close()
     logger.info("table_storage_cleanup_completed")

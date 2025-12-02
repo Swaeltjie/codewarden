@@ -5,6 +5,30 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.4] - 2025-12-02
+
+### Fixed - Utils Module Bug Fixes
+
+- **Invalid Log Level Handling** (`logging.py`)
+  - Added validation for log level parameter in `setup_logging()`
+  - Now supports case-insensitive log levels ("info", "INFO", "Info" all work)
+  - Clear error message for invalid log levels instead of AttributeError
+  - Prevents application crash on startup with invalid LOG_LEVEL config
+
+- **Async/Sync Cleanup Mismatch** (`table_storage.py`, `function_app.py`)
+  - Changed `cleanup_table_storage()` from async to sync function
+  - Fixed resource leak where cleanup was scheduled but never executed
+  - `atexit` handler now properly calls cleanup functions
+  - Ensures `DefaultAzureCredential` connections are properly closed
+
+### Technical Details
+
+- **Files Modified**: 5 files
+- **Impact**: Fixes potential resource leaks and startup crashes
+- **Compatibility**: Fully backward compatible with v2.5.3
+
+---
+
 ## [2.5.3] - 2025-12-02
 
 ### Changed - Constants Centralization

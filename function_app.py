@@ -872,9 +872,8 @@ def _cleanup_resources():
         logger.warning("secret_manager_cleanup_failed", error=str(e))
 
     try:
-        # Note: cleanup_table_storage is async but we're in sync context
-        # For sync cleanup, just log - the credential will be GC'd
-        logger.info("table_storage_cleanup_scheduled")
+        cleanup_table_storage()
+        logger.info("table_storage_cleaned_up_on_shutdown")
     except Exception as e:
         logger.warning("table_storage_cleanup_failed", error=str(e))
 
