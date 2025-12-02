@@ -4,7 +4,7 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.5.0 - Resource cleanup verified, context manager support
+Version: 2.5.5 - Fixed datetime parsing vulnerability
 """
 import structlog
 import uuid
@@ -290,6 +290,21 @@ class FeedbackTracker:
         # Get author
         author = first_comment.get('author', {}).get('displayName', 'unknown')
 
+        # Parse published date safely
+        published_date_str = first_comment.get('publishedDate')
+        try:
+            if published_date_str and isinstance(published_date_str, str):
+                issue_created_at = datetime.fromisoformat(published_date_str.replace('Z', '+00:00'))
+            else:
+                issue_created_at = datetime.now(timezone.utc)
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "invalid_published_date",
+                published_date=published_date_str,
+                error=str(e)
+            )
+            issue_created_at = datetime.now(timezone.utc)
+
         # Create feedback entity
         feedback = FeedbackEntity(
             PartitionKey=repository,
@@ -304,7 +319,7 @@ class FeedbackTracker:
             repository=repository,
             project=project,
             author=author,
-            issue_created_at=datetime.fromisoformat(first_comment.get('publishedDate', datetime.now(timezone.utc).isoformat())),
+            issue_created_at=issue_created_at,
             review_id=review_id
         )
 

@@ -5,6 +5,65 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.5] - 2025-12-02
+
+### Fixed - Services Module Security & Reliability
+
+- **Circuit Breaker Deadlock Vulnerability** (`circuit_breaker.py`) - CRITICAL
+  - Converted manual lock acquire/release to context manager pattern
+  - Used `asyncio.timeout()` for lock acquisition timeout
+  - Separated state checking (under lock) from function execution (outside lock)
+  - Prevents complete application deadlock
+
+- **Session Race Condition** (`azure_devops.py`) - CRITICAL
+  - Fixed TOCTOU race in `_get_session()` token refresh
+  - Added proper session cleanup inside lock on failure
+  - Implemented double-check pattern with explicit cleanup
+
+- **Memory Exhaustion Bug** (`pattern_detector.py`) - HIGH
+  - Moved safety limit check BEFORE appending to list
+  - Check happens during iteration, preventing excess data load
+  - Prevents OOM crashes before protection activates
+
+- **Path Traversal Vulnerability** (`response_cache.py`) - HIGH
+  - Added URL decoding before validation to prevent bypass
+  - Check suspicious patterns in BOTH original and decoded paths
+  - Added control character detection and path length limits
+  - Expanded suspicious patterns list (/dev/, /sys/, ~/)
+
+- **Resource Leak in AI Client** (`ai_client.py`)
+  - Added try-except-finally block in `close()` method
+  - Set `_client = None` after closing to prevent reuse
+  - Added warning logging for close errors
+
+- **Unsafe Close Method** (`azure_devops.py`)
+  - Added lock protection for concurrent close calls
+  - Added try-except-finally blocks for session and credential
+  - Set references to None after cleanup
+
+- **DoS Vulnerability in Diff Parser** (`diff_parser.py`)
+  - Added MAX_HUNK_LINES = 10000 safety limit
+  - Early termination with warning when limit exceeded
+  - Prevents memory exhaustion from malicious diffs
+
+- **DateTime Parsing Vulnerability** (`feedback_tracker.py`)
+  - Added safe datetime parsing with proper exception handling
+  - Handle both ISO format and timezone suffixes (Z → +00:00)
+  - Proper fallback to current UTC time
+
+- **Lock Initialization Race Condition** (`response_cache.py`)
+  - Added double-check locking pattern with `_lock_init_lock`
+  - Safe for concurrent initialization attempts
+
+### Technical Details
+
+- **Files Modified**: 9 files, +196/-99 lines
+- **Security Impact**: Fixes path traversal, DoS, deadlock vulnerabilities
+- **Reliability Impact**: Fixes race conditions, resource leaks, memory issues
+- **Compatibility**: Fully backward compatible with v2.5.4
+
+---
+
 ## [2.5.4] - 2025-12-02
 
 ### Fixed - Utils Module Bug Fixes

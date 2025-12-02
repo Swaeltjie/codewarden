@@ -4,6 +4,8 @@ Git Diff Parser with Diff-Only Analysis
 
 Parses git diffs to extract only changed sections, dramatically reducing
 token usage and improving review focus.
+
+Version: 2.5.5 - Added DoS protection with hunk size limits
 """
 from typing import List, Optional
 from dataclasses import dataclass
@@ -147,11 +149,11 @@ class DiffParser:
     ) -> Optional[ChangedSection]:
         """
         Process a single hunk and extract changed section with context.
-        
+
         Args:
             hunk: Diff hunk from unidiff
             file_path: Path to the file
-            
+
         Returns:
             ChangedSection if changes found, None otherwise
         """
@@ -159,12 +161,25 @@ class DiffParser:
         removed_lines = []
         added_lines = []
         context_after = []
-        
+
         # Track if we're before, during, or after changes
         found_change = False
         lines_after_change = 0
-        
+
+        # Safety limit: prevent processing extremely large hunks (DoS protection)
+        MAX_HUNK_LINES = 10000
+        line_count = 0
+
         for line in hunk:
+            line_count += 1
+            if line_count > MAX_HUNK_LINES:
+                logger.warning(
+                    "hunk_too_large",
+                    file_path=file_path,
+                    line_count=line_count,
+                    max_allowed=MAX_HUNK_LINES
+                )
+                break
             if line.is_context:
                 if not found_change:
                     # Context before changes
@@ -180,12 +195,16 @@ class DiffParser:
             
             elif line.is_removed:
                 found_change = True
-                removed_lines.append(line.value)
+                # Safety limit on removed lines (DoS protection)
+                if len(removed_lines) < MAX_HUNK_LINES // 2:
+                    removed_lines.append(line.value)
                 lines_after_change = 0  # Reset counter
-            
+
             elif line.is_added:
                 found_change = True
-                added_lines.append(line.value)
+                # Safety limit on added lines (DoS protection)
+                if len(added_lines) < MAX_HUNK_LINES // 2:
+                    added_lines.append(line.value)
                 lines_after_change = 0  # Reset counter
         
         # Only return section if changes were found

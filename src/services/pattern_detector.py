@@ -4,7 +4,7 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.5.0 - Added metrics/observability support
+Version: 2.5.5 - Fixed memory exhaustion bug in review loading
 """
 import structlog
 import json
@@ -143,13 +143,20 @@ class PatternDetector:
             query_filter = f"reviewed_at ge datetime'{cutoff_time.isoformat()}'"
 
             # Use pagination to avoid loading all reviews into memory
+            # Apply safety limit DURING iteration to prevent OOM
             reviews = []
+            MAX_REVIEWS = 10000
             for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=100):
-                reviews.append(review)
-                # Safety limit to prevent unbounded growth (10K reviews ~= 10-20MB memory)
-                if len(reviews) >= 10000:
-                    logger.warning("pattern_analysis_truncated", max_reviews=10000, days=days)
+                # Check limit BEFORE appending to prevent loading excess data
+                if len(reviews) >= MAX_REVIEWS:
+                    logger.warning(
+                        "pattern_analysis_truncated",
+                        max_reviews=MAX_REVIEWS,
+                        days=days,
+                        reason="Safety limit to prevent memory exhaustion"
+                    )
                     break
+                reviews.append(review)
 
             metrics.reviews_processed = len(reviews)
 

@@ -6,7 +6,7 @@ Handles interactions with OpenAI API for code review analysis.
 Includes retry logic, rate limiting, structured response parsing,
 and circuit breaker protection.
 
-Version: 2.3.0
+Version: 2.5.5 - Fixed resource leak in close(), added proper cleanup
 """
 import asyncio
 from openai import AsyncOpenAI
@@ -381,8 +381,13 @@ class AIClient:
     async def close(self):
         """Close the OpenAI client."""
         if self._client:
-            await self._client.close()
-            logger.debug("ai_client_closed")
+            try:
+                await self._client.close()
+                logger.debug("ai_client_closed")
+            except Exception as e:
+                logger.warning("ai_client_close_error", error=str(e))
+            finally:
+                self._client = None
     
     async def __aenter__(self):
         """Async context manager entry."""

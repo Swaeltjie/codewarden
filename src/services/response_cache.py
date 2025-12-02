@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.5.0 - Uses Settings.CACHE_TTL_DAYS properly
+Version: 2.5.5 - Fixed path traversal vulnerability, improved lock init
 """
 import structlog
 import json
@@ -43,8 +43,10 @@ class ResponseCache:
     """
 
     # Storage rate limiting - class-level shared across instances
+    # Use list instead of shared mutable state to prevent race conditions
     _write_timestamps: list = []
     _write_lock = None  # Will be initialized on first use (using asyncio.Lock for async safety)
+    _lock_init_lock = None  # Lock for initializing the main lock (prevents race on initialization)
 
     def __init__(self, ttl_days: int = None):
         """
@@ -77,9 +79,19 @@ class ResponseCache:
         """
         import asyncio
 
-        # Initialize async lock on first use (lazy initialization)
+        # Initialize async lock on first use (lazy initialization with double-check)
+        # Use a class-level check to prevent multiple lock creation
         if ResponseCache._write_lock is None:
-            ResponseCache._write_lock = asyncio.Lock()
+            # This could still race, but asyncio.Lock() is cheap and creating
+            # multiple locks is harmless - only one will be used
+            # The critical section below with 'async with' ensures thread safety
+            if ResponseCache._lock_init_lock is None:
+                ResponseCache._lock_init_lock = asyncio.Lock()
+
+            async with ResponseCache._lock_init_lock:
+                # Double-check after acquiring init lock
+                if ResponseCache._write_lock is None:
+                    ResponseCache._write_lock = asyncio.Lock()
 
         now = datetime.now(timezone.utc).timestamp()
         window_start = now - 60  # 1 minute window
@@ -116,21 +128,32 @@ class ResponseCache:
         """
         import os
         from pathlib import Path
+        from urllib.parse import unquote
 
         # Check for empty path
         if not file_path or not isinstance(file_path, str):
+            return False
+
+        # Length check to prevent extremely long paths (DoS)
+        if len(file_path) > 1024:
             return False
 
         # Check for null bytes
         if '\x00' in file_path:
             return False
 
-        # Check for absolute paths (should be relative)
-        if os.path.isabs(file_path):
+        # Decode URL encoding to prevent bypass
+        try:
+            decoded_path = unquote(file_path)
+        except Exception:
             return False
 
-        # Check for suspicious patterns BEFORE normalization
-        # This prevents bypassing checks with encoded paths
+        # Check for absolute paths (should be relative)
+        if os.path.isabs(file_path) or os.path.isabs(decoded_path):
+            return False
+
+        # Check for suspicious patterns in BOTH original and decoded paths
+        # This prevents bypassing checks with URL encoding
         suspicious_patterns = [
             '../',
             '..\\',
@@ -138,28 +161,46 @@ class ResponseCache:
             '/proc/',
             'c:\\',
             '\\windows\\',
+            '/dev/',
+            '/sys/',
+            '~/',
         ]
 
         path_lower = file_path.lower()
-        if any(pattern in path_lower for pattern in suspicious_patterns):
-            return False
+        decoded_lower = decoded_path.lower()
+        for pattern in suspicious_patterns:
+            if pattern in path_lower or pattern in decoded_lower:
+                return False
+
+        # Check for control characters and Unicode tricks
+        for char in file_path:
+            if ord(char) < 32 or char in ['<', '>', '|', '\x7f']:
+                return False
 
         # Normalize the path and check for traversal
         try:
             normalized = os.path.normpath(file_path)
+            normalized_decoded = os.path.normpath(decoded_path)
 
-            # Check for path traversal patterns
-            if '..' in Path(normalized).parts:
-                return False
+            # Check for path traversal patterns in both
+            for norm_path in [normalized, normalized_decoded]:
+                parts = Path(norm_path).parts
 
-            # Check if normalized path starts with / or \ (absolute)
-            if normalized.startswith(('/', '\\')):
-                return False
+                # Check for '..' in any part
+                if '..' in parts:
+                    return False
 
-            # Additional check: ensure normalized path doesn't escape current directory
-            # by checking that it doesn't start with parent directory references
-            if normalized.startswith('..'):
-                return False
+                # Check for empty parts (e.g., '//' in path)
+                if '' in parts:
+                    return False
+
+                # Check if normalized path starts with / or \ (absolute)
+                if norm_path.startswith(('/', '\\')):
+                    return False
+
+                # Additional check: ensure normalized path doesn't escape current directory
+                if norm_path.startswith('..'):
+                    return False
 
         except (ValueError, OSError):
             return False

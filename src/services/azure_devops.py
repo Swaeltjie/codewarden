@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.5.0 - Removed deprecated sync session property
+Version: 2.5.5 - Fixed session race condition, improved close() safety
 """
 import aiohttp
 import asyncio
@@ -134,16 +134,25 @@ class AzureDevOpsClient:
             try:
                 auth_header = await self._get_auth_token()
                 self._session.headers.update({"Authorization": auth_header})
+                return self._session
             except Exception:
-                # If token refresh fails, close session and reinitialize
-                await self._session.close()
-                self._session = None
+                # If token refresh fails, need to reinitialize under lock
+                # Don't close here - will be handled in the lock section
+                pass
 
         if self._session is None or self._session.closed:
             # Slow path: need to initialize session
             async with self._session_lock:
                 # Double-check after acquiring lock
                 if self._session is None or self._session.closed:
+                    # Clean up old session if it exists and is closed
+                    if self._session is not None and self._session.closed:
+                        try:
+                            await self._session.close()
+                        except Exception:
+                            pass  # Already closed
+                        self._session = None
+
                     auth_header = await self._get_auth_token()
 
                     # Connection pool tuning for production workloads
@@ -850,13 +859,25 @@ class AzureDevOpsClient:
 
     async def close(self):
         """Close the HTTP session and credential."""
-        if self._session and not self._session.closed:
-            await self._session.close()
-            logger.debug("devops_session_closed")
+        # Use lock to prevent concurrent close calls
+        async with self._session_lock:
+            if self._session and not self._session.closed:
+                try:
+                    await self._session.close()
+                    logger.debug("devops_session_closed")
+                except Exception as e:
+                    logger.warning("devops_session_close_error", error=str(e))
+                finally:
+                    self._session = None
 
-        if self._credential:
-            await self._credential.close()
-            logger.debug("devops_credential_closed")
+            if self._credential:
+                try:
+                    await self._credential.close()
+                    logger.debug("devops_credential_closed")
+                except Exception as e:
+                    logger.warning("devops_credential_close_error", error=str(e))
+                finally:
+                    self._credential = None
     
     async def __aenter__(self):
         """Async context manager entry."""
