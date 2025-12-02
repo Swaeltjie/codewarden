@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.5.0 - Added validation to result aggregation
+Version: 2.5.8 - Added comprehensive input validation and DoS protection
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -12,6 +12,9 @@ from enum import Enum
 import uuid
 import os
 from datetime import datetime, timezone
+
+# Import constants for validation
+from src.utils.constants import MAX_ISSUES_PER_REVIEW, MAX_COMMENT_LENGTH
 
 
 class IssueSeverity(str, Enum):
@@ -29,10 +32,10 @@ class SuggestedFix(BaseModel):
 
     Provides before/after code snippets that developers can copy-paste.
     """
-    description: str = Field(..., description="Brief description of the fix")
-    before: str = Field(..., description="Code that has the issue")
-    after: str = Field(..., description="Fixed code snippet")
-    explanation: Optional[str] = Field(None, description="Why this fix works")
+    description: str = Field(..., max_length=1000, description="Brief description of the fix")
+    before: str = Field(..., max_length=10000, description="Code that has the issue")
+    after: str = Field(..., max_length=10000, description="Fixed code snippet")
+    explanation: Optional[str] = Field(None, max_length=2000, description="Why this fix works")
 
 
 class ReviewIssue(BaseModel):
@@ -41,13 +44,34 @@ class ReviewIssue(BaseModel):
     """
     
     severity: IssueSeverity = Field(..., description="Issue severity level")
-    file_path: str = Field(..., description="Path to file with issue")
+    file_path: str = Field(..., max_length=2000, description="Path to file with issue")
     line_number: int = Field(ge=0, le=1000000, description="Line number (0 if file-level)")
-    issue_type: str = Field(..., description="Type of issue (e.g., PublicEndpoint, HardcodedSecret)")
-    message: str = Field(..., description="Human-readable issue description")
-    suggestion: Optional[str] = Field(None, description="Suggested fix or remediation")
-    code_snippet: Optional[str] = Field(None, description="Relevant code snippet")
+    issue_type: str = Field(..., max_length=200, description="Type of issue (e.g., PublicEndpoint, HardcodedSecret)")
+    message: str = Field(..., max_length=5000, description="Human-readable issue description")
+    suggestion: Optional[str] = Field(None, max_length=5000, description="Suggested fix or remediation")
+    code_snippet: Optional[str] = Field(None, max_length=10000, description="Relevant code snippet")
     suggested_fix: Optional[SuggestedFix] = Field(None, description="Detailed fix with before/after code")
+
+    @field_validator('message', 'suggestion', 'issue_type')
+    @classmethod
+    def sanitize_text_fields(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Sanitize text fields to prevent markdown injection.
+
+        Removes or escapes characters that could be used for
+        malicious markdown rendering in Azure DevOps comments.
+        """
+        if v is None:
+            return v
+
+        # Remove null bytes
+        v = v.replace('\x00', '')
+
+        # Limit consecutive newlines to prevent comment spam
+        while '\n\n\n' in v:
+            v = v.replace('\n\n\n', '\n\n')
+
+        return v.strip()
 
     @field_validator('file_path')
     @classmethod
@@ -110,11 +134,13 @@ class ReviewResult(BaseModel):
     
     review_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
+        max_length=100,
         description="Unique review ID"
     )
-    pr_id: int = Field(..., gt=0, description="Pull request ID")
+    pr_id: int = Field(..., gt=0, lt=2147483647, description="Pull request ID")
     issues: List[ReviewIssue] = Field(
         default_factory=list,
+        max_length=MAX_ISSUES_PER_REVIEW,
         description="List of issues found"
     )
     recommendation: ReviewRecommendation = Field(
@@ -123,27 +149,53 @@ class ReviewResult(BaseModel):
     )
     summary: Optional[str] = Field(
         None,
+        max_length=MAX_COMMENT_LENGTH,
         description="Human-readable summary of review"
     )
     duration_seconds: float = Field(
         default=0.0,
         ge=0,
+        lt=86400.0,
         description="Time taken for review in seconds"
     )
     tokens_used: int = Field(
         default=0,
         ge=0,
+        lt=10000000,
         description="Total tokens used by AI"
     )
     estimated_cost: float = Field(
         default=0.0,
         ge=0,
+        lt=10000.0,
         description="Estimated cost in USD"
     )
     reviewed_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp of review"
     )
+
+    @field_validator('issues')
+    @classmethod
+    def validate_issues_list(cls, v: List[ReviewIssue]) -> List[ReviewIssue]:
+        """
+        Validate issues list size and deduplicate.
+
+        Prevents DoS from excessive issues and removes duplicates.
+        """
+        if len(v) > MAX_ISSUES_PER_REVIEW:
+            raise ValueError(f"Too many issues: {len(v)} exceeds limit of {MAX_ISSUES_PER_REVIEW}")
+
+        # Deduplicate issues based on file_path + line_number + issue_type
+        seen = set()
+        unique_issues = []
+        for issue in v:
+            key = (issue.file_path, issue.line_number, issue.issue_type)
+            if key not in seen:
+                seen.add(key)
+                unique_issues.append(issue)
+
+        return unique_issues
     
     @staticmethod
     def create_empty(pr_id: int, message: str = "No IaC files found") -> "ReviewResult":
@@ -221,21 +273,24 @@ class ReviewResult(BaseModel):
         Returns:
             Parsed ReviewResult
         """
-        # Parse issues
+        # Parse issues with better error handling
         issues = []
+        invalid_count = 0
+
         for issue_data in ai_json.get('issues', []):
             # Use provided file_path as default if not in issue
             if 'file_path' not in issue_data and file_path:
                 issue_data['file_path'] = file_path
-            
+
             # Ensure line_number exists
             if 'line_number' not in issue_data:
                 issue_data['line_number'] = 0
-            
+
             try:
                 issues.append(ReviewIssue(**issue_data))
-            except Exception as e:
+            except (ValueError, TypeError) as e:
                 # Log but don't fail - skip invalid issues
+                # Only catch specific validation errors, not all exceptions
                 import structlog
                 logger = structlog.get_logger(__name__)
                 logger.warning(
@@ -243,6 +298,18 @@ class ReviewResult(BaseModel):
                     issue_data=issue_data,
                     error=str(e)
                 )
+                invalid_count += 1
+
+        # Log metrics about invalid issues
+        if invalid_count > 0:
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.warning(
+                "skipped_invalid_issues",
+                invalid_count=invalid_count,
+                valid_count=len(issues),
+                pr_id=pr_id
+            )
         
         # Get metadata
         metadata = ai_json.get('_metadata', {})

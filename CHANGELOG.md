@@ -5,6 +5,72 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.8] - 2025-12-02
+
+### Fixed - Models Module Input Validation & Security
+
+- **Missing Field Length Limits** (`feedback.py`, `pr_event.py`, `reliability.py`, `review_result.py`) - HIGH
+  - Added `max_length` constraints to all string fields to prevent DoS attacks
+  - Added `gt`/`lt` bounds to integer fields to prevent integer overflow
+  - Examples: `PartitionKey: str = Field(..., max_length=1024)`, `pr_id: int = Field(..., gt=0, lt=2147483647)`
+
+- **Missing Input Validation** (`feedback.py`) - HIGH
+  - Added `validate_severity()` validator to enforce valid severity values
+  - Added proper datetime parsing with timezone validation in `from_table_entity()`
+  - Added type checking for entity parameter
+
+- **Branch Reference Injection** (`pr_event.py`) - HIGH
+  - Added `validate_branch_ref()` validator to prevent command injection
+  - Checks for null bytes, newlines (log injection), and validates Azure DevOps format
+  - Validates branch format: `refs/(heads|tags)/[\w\-\./_]+`
+
+- **Email Validation** (`pr_event.py`) - MEDIUM
+  - Added `validate_email()` for basic email format validation
+  - Normalizes to lowercase and strips whitespace
+
+- **PR Title Validation** (`pr_event.py`) - MEDIUM
+  - Added `validate_title()` to reject empty/whitespace-only titles
+  - Made `from_azure_devops_webhook()` stricter - raises ValueError for missing required fields
+
+- **Path Traversal in FileChange** (`pr_event.py`) - HIGH
+  - Added `validate_file_path()` to check for null bytes and path traversal (`..`)
+  - Mirrors validation from `review_result.py`
+
+- **JSON Field Validation** (`feedback.py`) - MEDIUM
+  - Added `validate_json_field()` for `issue_types` and `files_reviewed` fields
+  - Validates JSON structure and limits array size to 1000 items (DoS protection)
+
+- **Circuit Breaker State Validation** (`reliability.py`) - MEDIUM
+  - Added `validate_state()` to enforce valid state values: CLOSED, OPEN, HALF_OPEN
+  - Added `validate_partition_key()` to enforce YYYY-MM-DD date format
+
+- **Review Result JSON Validation** (`reliability.py`) - MEDIUM
+  - Added `validate_review_json()` to ensure `review_result_json` contains valid JSON
+
+- **Text Sanitization** (`review_result.py`) - MEDIUM
+  - Added `sanitize_text_fields()` to remove null bytes and limit consecutive newlines
+  - Prevents markdown injection in Azure DevOps comments
+
+- **Issues List Validation** (`review_result.py`) - HIGH
+  - Added `validate_issues_list()` to enforce `MAX_ISSUES_PER_REVIEW` limit
+  - Auto-deduplicates issues based on file_path + line_number + issue_type
+
+- **Better Error Handling in Parsing** (`review_result.py`) - LOW
+  - Changed exception catch from `Exception` to specific `(ValueError, TypeError)`
+  - Added logging for invalid issues count
+
+- **Thread Safety Documentation** (`reliability.py`) - LOW
+  - Added docstring clarification for `should_allow_request()` about TOCTOU race conditions
+
+### Technical Details
+
+- **Files Modified**: 4 files in src/models/
+- **Security Impact**: Prevents DoS, injection attacks, and integer overflow
+- **Validation Impact**: All Pydantic models now have comprehensive field constraints
+- **Compatibility**: Fully backward compatible with v2.5.7
+
+---
+
 ## [2.5.7] - 2025-12-02
 
 ### Changed - Centralized Constants & Logging

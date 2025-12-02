@@ -4,11 +4,11 @@ Reliability Models
 
 Data models for idempotency tracking and response caching.
 
-Version: 2.5.3
+Version: 2.5.8
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import hashlib
 import json
 
@@ -27,16 +27,25 @@ class IdempotencyEntity(BaseModel):
     - RowKey: Request ID (PR ID + event type hash)
     - TTL: 48 hours via Table Storage lifecycle policy
     """
-    PartitionKey: str  # Date: YYYY-MM-DD
-    RowKey: str  # Request ID
-    pr_id: int
-    repository: str
-    project: str
-    event_type: str  # "pr.created", "pr.updated", etc.
+    PartitionKey: str = Field(..., max_length=100)  # Date: YYYY-MM-DD
+    RowKey: str = Field(..., max_length=200)  # Request ID
+    pr_id: int = Field(..., gt=0, lt=2147483647)
+    repository: str = Field(..., max_length=500)
+    project: str = Field(..., max_length=500)
+    event_type: str = Field(..., max_length=100)  # "pr.created", "pr.updated", etc.
     first_processed_at: datetime
     last_seen_at: datetime
-    processing_count: int = 1
-    result_summary: str  # Brief summary of review result
+    processing_count: int = Field(default=1, ge=1, lt=1000)
+    result_summary: str = Field(..., max_length=1000)  # Brief summary of review result
+
+    @field_validator('PartitionKey')
+    @classmethod
+    def validate_partition_key(cls, v: str) -> str:
+        """Validate partition key is a valid date format."""
+        import re
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
+            raise ValueError("PartitionKey must be in YYYY-MM-DD format")
+        return v
 
     @classmethod
     def create_request_id(
@@ -124,19 +133,29 @@ class CacheEntity(BaseModel):
     - RowKey: Content hash (SHA256 of diff content)
     - TTL: 7 days
     """
-    PartitionKey: str  # Repository name
-    RowKey: str  # Content hash (SHA256)
-    diff_hash: str
-    file_path: str
-    file_type: str
-    review_result_json: str  # Serialized ReviewResult
-    tokens_used: int
-    estimated_cost: float
-    model_used: str
+    PartitionKey: str = Field(..., max_length=500)  # Repository name
+    RowKey: str = Field(..., max_length=100)  # Content hash (SHA256)
+    diff_hash: str = Field(..., max_length=100)
+    file_path: str = Field(..., max_length=2000)
+    file_type: str = Field(..., max_length=50)
+    review_result_json: str = Field(..., max_length=1000000)  # Serialized ReviewResult (1MB limit)
+    tokens_used: int = Field(..., ge=0, lt=10000000)
+    estimated_cost: float = Field(..., ge=0, lt=10000.0)
+    model_used: str = Field(..., max_length=200)
     created_at: datetime
     last_accessed_at: datetime
-    hit_count: int = 1
+    hit_count: int = Field(default=1, ge=1, lt=1000000)
     expires_at: datetime  # 7 days from creation
+
+    @field_validator('review_result_json')
+    @classmethod
+    def validate_review_json(cls, v: str) -> str:
+        """Validate that review_result_json contains valid JSON."""
+        try:
+            json.loads(v)
+            return v
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in review_result_json: {e}")
 
     @classmethod
     def create_content_hash(cls, diff_content: str, file_path: str) -> str:
@@ -220,13 +239,22 @@ class CircuitBreakerState(BaseModel):
     - OPEN: Too many failures, requests fail fast
     - HALF_OPEN: Testing if service recovered
     """
-    service_name: str
-    state: str  # "CLOSED", "OPEN", "HALF_OPEN"
-    failure_count: int = 0
-    success_count: int = 0
+    service_name: str = Field(..., max_length=200)
+    state: str = Field(..., max_length=20)  # "CLOSED", "OPEN", "HALF_OPEN"
+    failure_count: int = Field(default=0, ge=0, lt=10000)
+    success_count: int = Field(default=0, ge=0, lt=10000)
     last_failure_time: Optional[datetime] = None
     last_state_change: datetime
     next_retry_time: Optional[datetime] = None
+
+    @field_validator('state')
+    @classmethod
+    def validate_state(cls, v: str) -> str:
+        """Validate circuit breaker state is valid."""
+        valid_states = ["CLOSED", "OPEN", "HALF_OPEN"]
+        if v not in valid_states:
+            raise ValueError(f"state must be one of {valid_states}")
+        return v
 
     def record_success(self, success_threshold: int = 2) -> None:
         """
@@ -267,6 +295,12 @@ class CircuitBreakerState(BaseModel):
 
         IMPORTANT: This method does NOT modify state. State transitions
         happen under lock protection in CircuitBreaker.call().
+
+        THREAD SAFETY NOTE (v2.5.8):
+        This is a read-only check that may be subject to TOCTOU (time-of-check
+        to-time-of-use) races. The calling code MUST protect state transitions
+        with proper synchronization (locks/mutexes). Do not rely on this method
+        alone for thread safety.
 
         Returns:
             True if request should be allowed, False otherwise

@@ -4,11 +4,12 @@ Pydantic Models for Pull Request Events
 
 Data models for Azure DevOps webhook payloads and file changes.
 
-Version: 1.0.0
+Version: 2.5.8
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from enum import Enum
+import re
 
 
 class FileType(str, Enum):
@@ -27,19 +28,63 @@ class PREvent(BaseModel):
     Maps Azure DevOps webhook payload to internal representation.
     """
 
-    pr_id: int = Field(..., gt=0, description="Pull request ID")
-    repository_id: str = Field(..., description="Repository UUID")
-    repository_name: str = Field(..., description="Repository name")
-    project_id: str = Field(..., description="Project UUID or name")
-    project_name: str = Field(..., description="Project name")
-    source_branch: str = Field(..., description="Source branch ref (e.g., refs/heads/feature)")
-    target_branch: str = Field(..., description="Target branch ref (e.g., refs/heads/main)")
-    source_commit_id: Optional[str] = Field(None, description="Latest source commit SHA")
-    event_type: str = Field(..., description="Webhook event type (e.g., git.pullrequest.updated)")
-    title: str = Field(..., description="PR title")
-    description: Optional[str] = Field(None, description="PR description")
-    author_email: str = Field(..., description="Author email address")
-    author_name: Optional[str] = Field(None, description="Author display name")
+    pr_id: int = Field(..., gt=0, lt=2147483647, description="Pull request ID")
+    repository_id: str = Field(..., max_length=100, description="Repository UUID")
+    repository_name: str = Field(..., max_length=500, description="Repository name")
+    project_id: str = Field(..., max_length=100, description="Project UUID or name")
+    project_name: str = Field(..., max_length=500, description="Project name")
+    source_branch: str = Field(..., max_length=500, description="Source branch ref (e.g., refs/heads/feature)")
+    target_branch: str = Field(..., max_length=500, description="Target branch ref (e.g., refs/heads/main)")
+    source_commit_id: Optional[str] = Field(None, max_length=100, description="Latest source commit SHA")
+    event_type: str = Field(..., max_length=100, description="Webhook event type (e.g., git.pullrequest.updated)")
+    title: str = Field(..., max_length=1000, description="PR title")
+    description: Optional[str] = Field(None, max_length=10000, description="PR description")
+    author_email: str = Field(..., max_length=500, description="Author email address")
+    author_name: Optional[str] = Field(None, max_length=500, description="Author display name")
+
+    @field_validator('source_branch', 'target_branch')
+    @classmethod
+    def validate_branch_ref(cls, v: str) -> str:
+        """
+        Validate branch reference format.
+
+        Ensures branch names don't contain command injection characters
+        or path traversal patterns.
+        """
+        if not v:
+            raise ValueError("Branch reference cannot be empty")
+
+        # Check for null bytes
+        if '\x00' in v:
+            raise ValueError("Branch reference contains null bytes")
+
+        # Check for newlines (log injection)
+        if '\n' in v or '\r' in v:
+            raise ValueError("Branch reference contains newlines")
+
+        # Valid Azure DevOps branch format: refs/heads/branch-name
+        if not re.match(r'^refs/(heads|tags)/[\w\-\./_]+$', v):
+            raise ValueError(f"Invalid branch reference format: {v}")
+
+        return v
+
+    @field_validator('title')
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        """Validate PR title is not just whitespace."""
+        if not v or not v.strip():
+            raise ValueError("PR title cannot be empty or whitespace")
+        return v.strip()
+
+    @field_validator('author_email')
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        """Basic email validation."""
+        if not v or '@' not in v:
+            raise ValueError("Invalid email address")
+        if len(v.split('@')) != 2:
+            raise ValueError("Invalid email address format")
+        return v.lower().strip()
     
     @classmethod
     def from_azure_devops_webhook(cls, webhook_payload: dict) -> "PREvent":
@@ -110,6 +155,12 @@ class PREvent(BaseModel):
         if 'lastMergeSourceCommit' in resource:
             source_commit_id = resource['lastMergeSourceCommit'].get('commitId')
 
+        # Validate required fields have values (not just exist)
+        if not resource.get('title'):
+            raise ValueError("PR title is required")
+        if not created_by.get('uniqueName'):
+            raise ValueError("Author email is required")
+
         return cls(
             pr_id=resource['pullRequestId'],
             repository_id=repository['id'],
@@ -120,9 +171,9 @@ class PREvent(BaseModel):
             target_branch=resource['targetRefName'],
             source_commit_id=source_commit_id,
             event_type=event_type,
-            title=resource.get('title', 'No title'),
+            title=resource['title'],
             description=resource.get('description'),
-            author_email=created_by.get('uniqueName', 'unknown@example.com'),
+            author_email=created_by['uniqueName'],
             author_name=created_by.get('displayName')
         )
     
@@ -135,15 +186,39 @@ class FileChange(BaseModel):
     Represents a changed file in the PR with diff analysis.
     """
     
-    path: str = Field(..., description="File path relative to repo root")
+    path: str = Field(..., max_length=2000, description="File path relative to repo root")
     file_type: FileType = Field(..., description="Type of IaC file")
-    diff_content: str = Field(..., description="Unified diff content")
-    lines_added: int = Field(ge=0, description="Number of lines added")
-    lines_deleted: int = Field(ge=0, description="Number of lines deleted")
+    diff_content: str = Field(..., max_length=1000000, description="Unified diff content")
+    lines_added: int = Field(ge=0, lt=1000000, description="Number of lines added")
+    lines_deleted: int = Field(ge=0, lt=1000000, description="Number of lines deleted")
     changed_sections: List = Field(
         default_factory=list,
+        max_length=10000,
         description="Parsed changed sections from diff parser"
     )
+
+    @field_validator('path')
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        """
+        Validate file path to prevent path traversal.
+
+        Similar to review_result.py validation.
+        """
+        if not v:
+            raise ValueError("file path cannot be empty")
+
+        # Check for null bytes
+        if '\x00' in v:
+            raise ValueError("file path contains null bytes")
+
+        # Check for path traversal
+        import os
+        normalized = os.path.normpath(v)
+        if '..' in normalized.split(os.sep):
+            raise ValueError("file path contains path traversal")
+
+        return v
     
     @property
     def total_changes(self) -> int:

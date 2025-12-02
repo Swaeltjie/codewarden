@@ -4,12 +4,13 @@ Data models for feedback tracking and learning.
 
 Represents developer feedback on AI suggestions for continuous improvement.
 
-Version: 2.0.0
+Version: 2.5.8
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime, timezone
 from enum import Enum
+import json
 
 
 class FeedbackType(str, Enum):
@@ -28,27 +29,27 @@ class FeedbackEntity(BaseModel):
     """
 
     # Table Storage keys
-    PartitionKey: str = Field(..., description="Repository ID")
-    RowKey: str = Field(..., description="Unique feedback ID (UUID)")
+    PartitionKey: str = Field(..., max_length=1024, description="Repository ID")
+    RowKey: str = Field(..., max_length=1024, description="Unique feedback ID (UUID)")
 
     # Feedback details
-    pr_id: int = Field(..., description="Pull request ID")
-    thread_id: int = Field(..., description="PR thread ID")
-    comment_id: Optional[int] = Field(None, description="Comment ID if applicable")
+    pr_id: int = Field(..., gt=0, lt=2147483647, description="Pull request ID")
+    thread_id: int = Field(..., gt=0, lt=2147483647, description="PR thread ID")
+    comment_id: Optional[int] = Field(None, gt=0, lt=2147483647, description="Comment ID if applicable")
 
     # Issue details
-    issue_type: str = Field(..., description="Type of issue flagged")
-    severity: str = Field(..., description="Severity level (critical, high, medium, low)")
-    file_path: str = Field(..., description="File where issue was found")
+    issue_type: str = Field(..., max_length=200, description="Type of issue flagged")
+    severity: str = Field(..., max_length=50, description="Severity level (critical, high, medium, low)")
+    file_path: str = Field(..., max_length=2000, description="File where issue was found")
 
     # Feedback
     feedback_type: FeedbackType = Field(..., description="Type of feedback received")
     is_positive: bool = Field(..., description="True if feedback is positive")
 
     # Context
-    repository: str = Field(..., description="Repository name")
-    project: str = Field(..., description="Project name")
-    author: str = Field(..., description="Feedback author")
+    repository: str = Field(..., max_length=500, description="Repository name")
+    project: str = Field(..., max_length=500, description="Project name")
+    author: str = Field(..., max_length=500, description="Feedback author")
 
     # Timestamps
     issue_created_at: datetime = Field(..., description="When issue was reported")
@@ -58,8 +59,17 @@ class FeedbackEntity(BaseModel):
     )
 
     # Metadata
-    ai_model: Optional[str] = Field(None, description="AI model that generated the issue")
-    review_id: Optional[str] = Field(None, description="Review ID for tracking")
+    ai_model: Optional[str] = Field(None, max_length=200, description="AI model that generated the issue")
+    review_id: Optional[str] = Field(None, max_length=200, description="Review ID for tracking")
+
+    @field_validator('severity')
+    @classmethod
+    def validate_severity(cls, v: str) -> str:
+        """Validate severity is one of expected values."""
+        valid_severities = ['critical', 'high', 'medium', 'low', 'info']
+        if v.lower() not in valid_severities:
+            raise ValueError(f"severity must be one of {valid_severities}")
+        return v.lower()
 
     def to_table_entity(self) -> dict:
         """
@@ -89,12 +99,29 @@ class FeedbackEntity(BaseModel):
 
         Returns:
             FeedbackEntity instance
+
+        Raises:
+            ValueError: If entity data is invalid
         """
-        # Parse datetime fields
-        if isinstance(entity.get('issue_created_at'), str):
-            entity['issue_created_at'] = datetime.fromisoformat(entity['issue_created_at'])
-        if isinstance(entity.get('feedback_received_at'), str):
-            entity['feedback_received_at'] = datetime.fromisoformat(entity['feedback_received_at'])
+        if not isinstance(entity, dict):
+            raise ValueError("entity must be a dictionary")
+
+        # Parse datetime fields with timezone validation
+        try:
+            if isinstance(entity.get('issue_created_at'), str):
+                dt = datetime.fromisoformat(entity['issue_created_at'])
+                # Ensure timezone is set to UTC
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                entity['issue_created_at'] = dt
+            if isinstance(entity.get('feedback_received_at'), str):
+                dt = datetime.fromisoformat(entity['feedback_received_at'])
+                # Ensure timezone is set to UTC
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                entity['feedback_received_at'] = dt
+        except (ValueError, AttributeError) as e:
+            raise ValueError(f"Invalid datetime format in entity: {e}")
 
         return cls(**entity)
 
@@ -110,36 +137,36 @@ class ReviewHistoryEntity(BaseModel):
     """
 
     # Table Storage keys
-    PartitionKey: str = Field(..., description="Repository ID")
-    RowKey: str = Field(..., description="Unique review ID")
+    PartitionKey: str = Field(..., max_length=1024, description="Repository ID")
+    RowKey: str = Field(..., max_length=1024, description="Unique review ID")
 
     # PR details
-    pr_id: int = Field(..., description="Pull request ID")
-    pr_title: str = Field(..., description="PR title")
-    pr_author: str = Field(..., description="PR author")
+    pr_id: int = Field(..., gt=0, lt=2147483647, description="Pull request ID")
+    pr_title: str = Field(..., max_length=1000, description="PR title")
+    pr_author: str = Field(..., max_length=500, description="PR author")
 
     # Review details
-    recommendation: str = Field(..., description="approve, request_changes, or comment")
-    issue_count: int = Field(default=0, description="Total number of issues found")
-    critical_count: int = Field(default=0, description="Number of critical issues")
-    high_count: int = Field(default=0, description="Number of high severity issues")
-    medium_count: int = Field(default=0, description="Number of medium severity issues")
-    low_count: int = Field(default=0, description="Number of low severity issues")
+    recommendation: str = Field(..., max_length=50, description="approve, request_changes, or comment")
+    issue_count: int = Field(default=0, ge=0, lt=100000, description="Total number of issues found")
+    critical_count: int = Field(default=0, ge=0, lt=100000, description="Number of critical issues")
+    high_count: int = Field(default=0, ge=0, lt=100000, description="Number of high severity issues")
+    medium_count: int = Field(default=0, ge=0, lt=100000, description="Number of medium severity issues")
+    low_count: int = Field(default=0, ge=0, lt=100000, description="Number of low severity issues")
 
     # Issue types (serialized JSON array of types found)
-    issue_types: str = Field(default="[]", description="JSON array of issue types")
+    issue_types: str = Field(default="[]", max_length=10000, description="JSON array of issue types")
 
     # Files reviewed (serialized JSON array)
-    files_reviewed: str = Field(default="[]", description="JSON array of file paths")
+    files_reviewed: str = Field(default="[]", max_length=50000, description="JSON array of file paths")
 
     # Context
-    repository: str = Field(..., description="Repository name")
-    project: str = Field(..., description="Project name")
+    repository: str = Field(..., max_length=500, description="Repository name")
+    project: str = Field(..., max_length=500, description="Project name")
 
     # Performance metrics
-    tokens_used: int = Field(default=0, description="Tokens used for review")
-    estimated_cost: float = Field(default=0.0, description="Estimated cost in USD")
-    duration_seconds: float = Field(default=0.0, description="Review duration")
+    tokens_used: int = Field(default=0, ge=0, lt=10000000, description="Tokens used for review")
+    estimated_cost: float = Field(default=0.0, ge=0, lt=10000.0, description="Estimated cost in USD")
+    duration_seconds: float = Field(default=0.0, ge=0, lt=86400.0, description="Review duration")
 
     # Timestamps
     reviewed_at: datetime = Field(
@@ -148,8 +175,25 @@ class ReviewHistoryEntity(BaseModel):
     )
 
     # Metadata
-    ai_model: Optional[str] = Field(None, description="AI model used")
-    review_strategy: Optional[str] = Field(None, description="single_pass, chunked, or hierarchical")
+    ai_model: Optional[str] = Field(None, max_length=200, description="AI model used")
+    review_strategy: Optional[str] = Field(None, max_length=50, description="single_pass, chunked, or hierarchical")
+
+    @field_validator('issue_types', 'files_reviewed')
+    @classmethod
+    def validate_json_field(cls, v: str) -> str:
+        """Validate that JSON fields contain valid JSON."""
+        if not v:
+            return "[]"
+        try:
+            parsed = json.loads(v)
+            if not isinstance(parsed, list):
+                raise ValueError("JSON field must contain an array")
+            # Limit array size to prevent DoS
+            if len(parsed) > 1000:
+                raise ValueError("JSON array too large (max 1000 items)")
+            return v
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}")
 
     def to_table_entity(self) -> dict:
         """Convert to dict for Azure Table Storage."""
@@ -159,9 +203,32 @@ class ReviewHistoryEntity(BaseModel):
 
     @classmethod
     def from_table_entity(cls, entity: dict) -> "ReviewHistoryEntity":
-        """Create from Azure Table Storage entity."""
-        if isinstance(entity.get('reviewed_at'), str):
-            entity['reviewed_at'] = datetime.fromisoformat(entity['reviewed_at'])
+        """
+        Create from Azure Table Storage entity.
+
+        Args:
+            entity: Dictionary from table storage
+
+        Returns:
+            ReviewHistoryEntity instance
+
+        Raises:
+            ValueError: If entity data is invalid
+        """
+        if not isinstance(entity, dict):
+            raise ValueError("entity must be a dictionary")
+
+        # Parse datetime field with timezone validation
+        try:
+            if isinstance(entity.get('reviewed_at'), str):
+                dt = datetime.fromisoformat(entity['reviewed_at'])
+                # Ensure timezone is set to UTC
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                entity['reviewed_at'] = dt
+        except (ValueError, AttributeError) as e:
+            raise ValueError(f"Invalid datetime format in entity: {e}")
+
         return cls(**entity)
 
     @classmethod
