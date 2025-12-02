@@ -4,7 +4,7 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.5.13 - Additional inline comments
 """
 import json
 from typing import List, Dict, Tuple, Optional
@@ -563,6 +563,7 @@ class PatternDetector:
             health_score = HEALTH_SCORE_MAX
 
             # Deduct for average issues per PR (up to 30 points)
+            # Thresholds: >10 severe, >5 moderate, >2 minor
             if avg_issues_per_pr > 10:
                 health_score -= 30
             elif avg_issues_per_pr > 5:
@@ -571,6 +572,7 @@ class PatternDetector:
                 health_score -= 10
 
             # Deduct for critical issues (up to 40 points)
+            # Critical issues have highest weight in health score
             if critical_issues > 10:
                 health_score -= 40
             elif critical_issues > 5:
@@ -579,12 +581,13 @@ class PatternDetector:
                 health_score -= 10
 
             # Deduct for high issues (up to 20 points)
+            # High severity contributes less than critical
             if high_issues > 20:
                 health_score -= 20
             elif high_issues > 10:
                 health_score -= 10
 
-            # Ensure score is within bounds
+            # Clamp score to valid range [0, 100]
             health_score = max(0, min(100, health_score))
 
             # Determine status

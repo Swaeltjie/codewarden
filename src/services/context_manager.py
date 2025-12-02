@@ -4,7 +4,7 @@ Context Manager for Review Strategy Selection
 
 Determines which review strategy to use based on PR size and complexity.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.5.13 - Additional inline comments
 """
 from enum import Enum
 from typing import Dict, List
@@ -67,10 +67,13 @@ class ContextManager:
         )
         
         # Simple heuristics for MVP
+        # Small PRs: review everything in one AI call
         if file_count <= 5 and estimated_tokens <= 10_000:
             strategy = ReviewStrategy.SINGLE_PASS
+        # Medium PRs: group related files and review each group
         elif file_count <= 15 and estimated_tokens <= 40_000:
             strategy = ReviewStrategy.CHUNKED
+        # Large PRs: review each file individually, then cross-file analysis
         else:
             strategy = ReviewStrategy.HIERARCHICAL
         

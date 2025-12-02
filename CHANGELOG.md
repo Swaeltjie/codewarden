@@ -5,6 +5,36 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.13] - 2025-12-02
+
+### Changed - Additional Inline Comments
+
+- **Reviewed Codebase for Comment Coverage**
+  - Codebase already has comprehensive documentation with:
+    - Module-level docstrings explaining purpose and version
+    - Class-level docstrings describing features
+    - Method-level docstrings with Args, Returns, Raises sections
+    - Inline comments for complex logic
+
+- **Added Targeted Inline Comments for Clarity**
+  - `src/services/pattern_detector.py`: Added comments explaining health score thresholds
+    - Threshold severity levels: >10 severe, >5 moderate, >2 minor
+    - Critical issues have highest weight in health score
+    - High severity contributes less than critical
+    - Score clamping to valid range [0, 100]
+  - `src/services/context_manager.py`: Added comments explaining review strategies
+    - Small PRs: review everything in one AI call
+    - Medium PRs: group related files and review each group
+    - Large PRs: review each file individually, then cross-file analysis
+
+### Technical Details
+
+- **Files Modified**: 2 files with targeted comment improvements
+- **Documentation Status**: Codebase already well-documented
+- **Compatibility**: Fully backward compatible with v2.5.12
+
+---
+
 ## [2.5.12] - 2025-12-02
 
 ### Changed - Comprehensive Type Hints Throughout Codebase
