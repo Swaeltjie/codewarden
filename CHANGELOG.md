@@ -5,6 +5,34 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.2] - 2025-12-02
+
+### Fixed - Async Safety & Input Validation
+
+- **Async Race Condition in Cache Rate Limiting** (`response_cache.py`)
+  - Converted `_check_write_rate_limit()` to async using `asyncio.Lock`
+  - Previous `threading.Lock` did not provide proper protection in async context
+  - Prevents rate limiting bypass by concurrent async requests
+
+- **Circuit Breaker Deadlock Prevention** (`circuit_breaker.py`)
+  - Added critical documentation for lock release in finally block
+  - Ensures lock is always released even if exception occurs
+  - Prevents permanent service deadlock on circuit breaker
+
+- **Prompt Length Validation** (`ai_client.py`)
+  - Added `MAX_PROMPT_LENGTH` constant (1 million characters)
+  - Validates prompt is non-empty string before API call
+  - Prevents memory exhaustion from extremely large prompts
+  - Clear error message with remediation suggestion
+
+### Technical Details
+
+- **Files Modified**: 3 files, +30/-11 lines
+- **Security Impact**: Prevents DoS via oversized prompts, fixes async race condition
+- **Compatibility**: Fully backward compatible with v2.5.1
+
+---
+
 ## [2.5.1] - 2025-12-02
 
 ### Fixed - Security & Concurrency Issues
