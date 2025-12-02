@@ -4,7 +4,7 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.5.11 - Centralized constants usage
 """
 import uuid
 import json
@@ -27,6 +27,7 @@ from src.utils.constants import (
     FEEDBACK_HIGH_VALUE_THRESHOLD,
     FEEDBACK_LOW_VALUE_THRESHOLD,
     PATTERN_ANALYSIS_DAYS,
+    TABLE_STORAGE_BATCH_SIZE,
 )
 from src.utils.logging import get_logger
 
@@ -105,7 +106,7 @@ class FeedbackTracker:
 
             # Use pagination to avoid loading all reviews into memory
             recent_reviews = []
-            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=100):
+            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                 recent_reviews.append(review)
 
             logger.info(
@@ -362,7 +363,7 @@ class FeedbackTracker:
 
             # Use pagination to avoid loading all entities into memory
             feedback_entries = []
-            for entry in query_entities_paginated(table_client, query_filter=query_filter, page_size=100):
+            for entry in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                 feedback_entries.append(entry)
 
             if not feedback_entries:
@@ -469,7 +470,7 @@ class FeedbackTracker:
 
             # Use pagination to avoid loading all entities into memory
             feedback_entries = []
-            for entry in query_entities_paginated(table_client, query_filter=query_filter, page_size=100):
+            for entry in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                 feedback_entries.append(entry)
 
             total_count = len(feedback_entries)

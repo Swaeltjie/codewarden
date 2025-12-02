@@ -7,7 +7,7 @@ Provides health and metrics endpoints for monitoring reliability features:
 - Response cache statistics
 - Idempotency statistics
 
-Version: 2.5.9 - Added input validation, fixed division by zero, standardized error responses
+Version: 2.5.11 - Centralized constants usage
 """
 from datetime import datetime, timezone
 from typing import Dict, Any
@@ -20,14 +20,16 @@ from src.utils.constants import (
     HEALTH_SCORE_EXCELLENT,
     HEALTH_SCORE_HEALTHY,
     HEALTH_SCORE_MODERATE,
+    HEALTH_SCORE_DEGRADED,
+    HEALTH_CHECK_CACHE_EFFICIENCY_LOW,
+    HEALTH_CHECK_CACHE_EFFICIENCY_MODERATE,
+    HEALTH_CHECK_DUPLICATE_RATE_HIGH,
+    HEALTH_CHECK_DUPLICATE_RATE_MODERATE,
 )
 from src.utils.logging import get_logger
 from src.utils.config import __version__
 
 logger = get_logger(__name__)
-
-# Health score threshold for degraded status
-HEALTH_SCORE_DEGRADED = 70
 
 
 class ReliabilityHealthHandler:
@@ -158,20 +160,20 @@ class ReliabilityHealthHandler:
 
         # Cache health
         cache_efficiency = cache_stats.get("cache_efficiency_percent", 0)
-        if cache_efficiency < 10:
+        if cache_efficiency < HEALTH_CHECK_CACHE_EFFICIENCY_LOW:
             health_score -= 10  # Low cache efficiency
             cache_status = "low_efficiency"
-        elif cache_efficiency < 30:
+        elif cache_efficiency < HEALTH_CHECK_CACHE_EFFICIENCY_MODERATE:
             cache_status = "moderate_efficiency"
         else:
             cache_status = "high_efficiency"
 
         # Idempotency health
         duplicate_rate = idempotency_stats.get("duplicate_rate_percent", 0)
-        if duplicate_rate > 20:
+        if duplicate_rate > HEALTH_CHECK_DUPLICATE_RATE_HIGH:
             health_score -= 15  # High duplicate rate indicates issues
             idempotency_status = "high_duplicates"
-        elif duplicate_rate > 10:
+        elif duplicate_rate > HEALTH_CHECK_DUPLICATE_RATE_MODERATE:
             idempotency_status = "moderate_duplicates"
         else:
             idempotency_status = "healthy"
@@ -236,8 +238,8 @@ class ReliabilityHealthHandler:
 
         issues = []
 
-        if cache_efficiency < 10:
-            issues.append("Low cache efficiency (<10%)")
+        if cache_efficiency < HEALTH_CHECK_CACHE_EFFICIENCY_LOW:
+            issues.append(f"Low cache efficiency (<{HEALTH_CHECK_CACHE_EFFICIENCY_LOW}%)")
 
         if active_entries == 0:
             issues.append("No cached entries")
@@ -247,9 +249,9 @@ class ReliabilityHealthHandler:
 
         if issues:
             return "Issues: " + ", ".join(issues)
-        elif cache_efficiency > 30:
+        elif cache_efficiency > HEALTH_CHECK_CACHE_EFFICIENCY_MODERATE:
             return "Excellent cache performance"
-        elif cache_efficiency > 10:
+        elif cache_efficiency > HEALTH_CHECK_CACHE_EFFICIENCY_LOW:
             return "Good cache performance"
         else:
             return "Building cache"

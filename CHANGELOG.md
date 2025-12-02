@@ -5,6 +5,48 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.11] - 2025-12-02
+
+### Changed - Centralized Constants Usage & Documentation
+
+- **Enhanced Constants Documentation** (`src/utils/constants.py`)
+  - Added comprehensive comments explaining purpose of every constant
+  - Organized constants into logical sections with clear headers
+  - Added new constants for HTTP connection pool settings:
+    - `HTTP_CONNECTION_POOL_SIZE` (100) - Total connection pool limit
+    - `HTTP_CONNECTION_LIMIT_PER_HOST` (30) - Per-host connection limit
+    - `DNS_CACHE_TTL_SECONDS` (300) - DNS cache duration
+  - Added `LOG_FIELD_MAX_LENGTH` (100) - Log field truncation limit
+  - Added `HEALTH_SCORE_DEGRADED` (70) - Health score threshold
+
+- **Centralized Constants in All Modules**
+  - Updated 8 files to import and use centralized constants
+  - Files updated:
+    - `src/services/azure_devops.py` - Uses HTTP connection pool constants
+    - `src/services/response_cache.py` - Uses RATE_LIMIT_WINDOW_SECONDS, TABLE_STORAGE_BATCH_SIZE
+    - `src/services/feedback_tracker.py` - Uses TABLE_STORAGE_BATCH_SIZE
+    - `src/services/idempotency_checker.py` - Uses TABLE_STORAGE_BATCH_SIZE
+    - `src/services/pattern_detector.py` - Uses TABLE_STORAGE_BATCH_SIZE
+    - `src/handlers/reliability_health.py` - Uses HEALTH_CHECK_* and HEALTH_SCORE_DEGRADED
+    - `src/prompts/factory.py` - Uses LOG_FIELD_MAX_LENGTH
+
+- **Eliminated Hardcoded Values**
+  - Replaced `page_size=100` with `TABLE_STORAGE_BATCH_SIZE` (12 occurrences)
+  - Replaced `window_start = now - 60` with `RATE_LIMIT_WINDOW_SECONDS`
+  - Replaced connection pool literals with HTTP_* constants
+  - Replaced health check thresholds with HEALTH_CHECK_* constants
+  - Replaced log truncation `[:100]` with `[:LOG_FIELD_MAX_LENGTH]`
+
+### Technical Details
+
+- **Files Modified**: 9 files
+- **New Constants Added**: 5
+- **Hardcoded Values Eliminated**: 20+
+- **Maintainability Impact**: All configuration now in single location
+- **Compatibility**: Fully backward compatible with v2.5.10
+
+---
+
 ## [2.5.10] - 2025-12-02
 
 ### Changed - Centralized Logging Throughout Codebase

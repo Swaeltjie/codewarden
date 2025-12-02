@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.5.11 - Centralized constants usage
 """
 import json
 from typing import Optional, Dict, Any
@@ -23,6 +23,8 @@ from src.utils.constants import (
     CACHE_TTL_DAYS,
     CACHE_MAX_WRITES_PER_MINUTE,
     CACHE_TABLE_NAME,
+    RATE_LIMIT_WINDOW_SECONDS,
+    TABLE_STORAGE_BATCH_SIZE,
 )
 from src.utils.logging import get_logger
 
@@ -94,7 +96,7 @@ class ResponseCache:
                     ResponseCache._write_lock = asyncio.Lock()
 
         now = datetime.now(timezone.utc).timestamp()
-        window_start = now - 60  # 1 minute window
+        window_start = now - RATE_LIMIT_WINDOW_SECONDS
 
         async with ResponseCache._write_lock:
             # Clean old timestamps
@@ -427,7 +429,7 @@ class ResponseCache:
                 query_filter = f"PartitionKey eq '{safe_repository}' and file_path eq '{safe_file_path}'"
 
                 # Use pagination to avoid loading all entities into memory
-                for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=100):
+                for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                     table_client.delete_entity(
                         partition_key=repository,
                         row_key=entity['RowKey']
@@ -446,7 +448,7 @@ class ResponseCache:
                 query_filter = f"PartitionKey eq '{safe_repository}'"
 
                 # Use pagination to avoid loading all entities into memory
-                for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=100):
+                for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                     table_client.delete_entity(
                         partition_key=repository,
                         row_key=entity['RowKey']
@@ -499,7 +501,7 @@ class ResponseCache:
             reused_entries = 0
             now = datetime.now(timezone.utc)
 
-            for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=100):
+            for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                 total_entries += 1
                 hit_count = entity.get('hit_count', 1)
                 total_hits += hit_count
@@ -568,7 +570,7 @@ class ResponseCache:
             deleted_count = 0
 
             # Process entries in paginated batches
-            for entity in query_entities_paginated(table_client, page_size=100):
+            for entity in query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE):
                 expires_at = entity.get('expires_at')
                 if isinstance(expires_at, str):
                     expires_at = datetime.fromisoformat(expires_at)

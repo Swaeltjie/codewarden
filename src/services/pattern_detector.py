@@ -4,7 +4,7 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.5.7 - Centralized constants and logging usage
+Version: 2.5.11 - Centralized constants usage
 """
 import json
 from typing import List, Dict, Tuple, Optional
@@ -29,6 +29,7 @@ from src.utils.constants import (
     HEALTH_SCORE_NEEDS_ATTENTION,
     HEALTH_SCORE_RECURRING_PENALTY,
     REVIEW_HISTORY_TABLE_NAME,
+    TABLE_STORAGE_BATCH_SIZE,
 )
 from src.utils.logging import get_logger
 
@@ -146,7 +147,7 @@ class PatternDetector:
             # Apply safety limit DURING iteration to prevent OOM
             reviews = []
             MAX_REVIEWS = 10000
-            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=100):
+            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                 # Check limit BEFORE appending to prevent loading excess data
                 if len(reviews) >= MAX_REVIEWS:
                     logger.warning(
@@ -538,7 +539,7 @@ class PatternDetector:
 
             # Use pagination to avoid loading all entities into memory
             reviews = []
-            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=100):
+            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                 reviews.append(review)
 
             if not reviews:

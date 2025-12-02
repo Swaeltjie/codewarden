@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.5.11 - Centralized constants usage
 """
 import aiohttp
 import asyncio
@@ -36,6 +36,9 @@ from src.utils.constants import (
     DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
     DEFAULT_RETRY_AFTER_SECONDS,
     MAX_COMMENT_LENGTH,
+    HTTP_CONNECTION_POOL_SIZE,
+    HTTP_CONNECTION_LIMIT_PER_HOST,
+    DNS_CACHE_TTL_SECONDS,
 )
 from src.utils.logging import get_logger
 
@@ -156,14 +159,11 @@ class AzureDevOpsClient:
                     auth_header = await self._get_auth_token()
 
                     # Connection pool tuning for production workloads
-                    # - limit: Max simultaneous connections (Azure DevOps can handle 100+)
-                    # - limit_per_host: Max connections per host (prevent overwhelming single endpoint)
-                    # - ttl_dns_cache: Cache DNS for 5 minutes (reduce DNS lookups)
-                    # - enable_cleanup_closed: Clean up closed connections automatically
+                    # Settings configured via centralized constants
                     connector = aiohttp.TCPConnector(
-                        limit=100,           # Total connection pool size
-                        limit_per_host=30,   # Per-host limit for Azure DevOps
-                        ttl_dns_cache=300,   # DNS cache TTL (5 minutes)
+                        limit=HTTP_CONNECTION_POOL_SIZE,
+                        limit_per_host=HTTP_CONNECTION_LIMIT_PER_HOST,
+                        ttl_dns_cache=DNS_CACHE_TTL_SECONDS,
                         enable_cleanup_closed=True
                     )
 

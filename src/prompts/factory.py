@@ -4,7 +4,7 @@ Prompt Factory for AI Code Reviews
 
 Generates specialized prompts for different file types and review strategies.
 
-Version: 2.5.7 - Centralized constants usage
+Version: 2.5.11 - Centralized constants usage
 """
 from typing import List, Dict, Optional
 import re
@@ -15,6 +15,7 @@ from src.utils.constants import (
     PROMPT_MAX_PATH_LENGTH,
     PROMPT_MAX_MESSAGE_LENGTH,
     PROMPT_MAX_ISSUE_TYPE_LENGTH,
+    LOG_FIELD_MAX_LENGTH,
 )
 from src.utils.logging import get_logger
 
@@ -88,7 +89,7 @@ class PromptFactory:
         if '[REDACTED]' in text:
             logger.warning(
                 "potential_prompt_injection_detected",
-                sanitized_text=text[:100]
+                sanitized_text=text[:LOG_FIELD_MAX_LENGTH]
             )
 
         return text

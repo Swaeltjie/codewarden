@@ -4,7 +4,7 @@ Idempotency Checker
 
 Prevents duplicate PR review processing when webhooks are retried.
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.5.11 - Centralized constants usage
 """
 from typing import Optional, Dict
 from datetime import datetime, timezone
@@ -16,6 +16,7 @@ from src.utils.table_storage import (
     query_entities_paginated
 )
 from src.utils.config import get_settings
+from src.utils.constants import TABLE_STORAGE_BATCH_SIZE
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -283,7 +284,7 @@ class IdempotencyChecker:
             duplicate_requests = 0
 
             # Use pagination to avoid loading all entities into memory
-            for entity in query_entities_paginated(table_client, page_size=100):
+            for entity in query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE):
                 total_requests += 1
                 if entity.get('processing_count', 1) > 1:
                     duplicate_requests += 1
