@@ -105,6 +105,7 @@ class CircuitBreaker:
                 f"Circuit breaker lock timeout for {self.service_name} after {LOCK_TIMEOUT_SECONDS}s"
             )
 
+        # CRITICAL: Ensure lock is always released even if exception occurs
         try:
             # Check if request should be allowed
             if not self.state.should_allow_request():
@@ -130,7 +131,7 @@ class CircuitBreaker:
                         service_name=self.service_name
                     )
         finally:
-            # Always release lock after state check
+            # CRITICAL: Always release lock after state check to prevent deadlock
             self._lock.release()
 
         # Execute the function (outside of lock)

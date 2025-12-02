@@ -43,7 +43,7 @@ class ResponseCache:
     # Storage rate limiting - max writes per minute (class-level shared across instances)
     MAX_WRITES_PER_MINUTE = 100
     _write_timestamps: list = []
-    _write_lock = None  # Will be initialized on first use
+    _write_lock = None  # Will be initialized on first use (using asyncio.Lock for async safety)
 
     def __init__(self, ttl_days: int = None):
         """
@@ -64,25 +64,26 @@ class ResponseCache:
 
         logger.info("response_cache_initialized", ttl_days=self.ttl_days)
 
-    def _check_write_rate_limit(self) -> bool:
+    async def _check_write_rate_limit_async(self) -> bool:
         """
-        Check if write rate limit is exceeded.
+        Check if write rate limit is exceeded (async-safe version).
 
-        Uses synchronous locking for thread-safe rate limiting.
+        Uses asyncio.Lock for proper async concurrency control.
+        NOTE: This is the async version - use this for all async code paths.
 
         Returns:
             True if write is allowed, False if rate limited
         """
-        import threading
+        import asyncio
 
-        # Initialize lock on first use (lazy initialization)
+        # Initialize async lock on first use (lazy initialization)
         if ResponseCache._write_lock is None:
-            ResponseCache._write_lock = threading.Lock()
+            ResponseCache._write_lock = asyncio.Lock()
 
         now = datetime.now(timezone.utc).timestamp()
         window_start = now - 60  # 1 minute window
 
-        with ResponseCache._write_lock:
+        async with ResponseCache._write_lock:
             # Clean old timestamps
             ResponseCache._write_timestamps = [
                 ts for ts in ResponseCache._write_timestamps
@@ -307,8 +308,8 @@ class ResponseCache:
                 logger.warning("unsafe_cache_file_path_store", file_path=file_path)
                 return
 
-            # Check storage rate limit
-            if not self._check_write_rate_limit():
+            # Check storage rate limit (use async version for proper concurrency control)
+            if not await self._check_write_rate_limit_async():
                 logger.warning(
                     "cache_write_skipped_rate_limit",
                     repository=repository,

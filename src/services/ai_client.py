@@ -125,6 +125,23 @@ class AIClient:
             )
             max_tokens = 4000
 
+        # Validate prompt parameter (prevent memory exhaustion from huge prompts)
+        MAX_PROMPT_LENGTH = 1_000_000  # 1 million chars (~250K tokens max)
+        if not prompt or not isinstance(prompt, str):
+            logger.error("invalid_prompt_parameter", prompt_type=type(prompt).__name__)
+            raise ValueError("Prompt must be a non-empty string")
+
+        if len(prompt) > MAX_PROMPT_LENGTH:
+            logger.error(
+                "prompt_too_large",
+                length=len(prompt),
+                max_length=MAX_PROMPT_LENGTH
+            )
+            raise ValueError(
+                f"Prompt exceeds maximum length of {MAX_PROMPT_LENGTH} characters. "
+                f"Current length: {len(prompt)}. Reduce PR size or use chunking."
+            )
+
         # For Azure AI Foundry, model parameter is the deployment name
         # For direct OpenAI, it's the model name (e.g., gpt-4o)
         if self.use_azure:
