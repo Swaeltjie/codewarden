@@ -5,6 +5,41 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.7] - 2025-12-02
+
+### Changed - Centralized Constants & Logging
+
+- **Centralized Logging Helper** (`src/utils/logging.py`)
+  - Added `get_logger()` convenience function for centralized logger imports
+  - Modules can now import from single source: `from src.utils.logging import get_logger`
+  - Wraps `structlog.get_logger()` for consistent usage across codebase
+
+- **Prompt Factory Input Limits to Constants** (`src/utils/constants.py`)
+  - Added `PROMPT_MAX_TITLE_LENGTH = 500`
+  - Added `PROMPT_MAX_PATH_LENGTH = 1000`
+  - Added `PROMPT_MAX_MESSAGE_LENGTH = 5000`
+  - Added `PROMPT_MAX_ISSUE_TYPE_LENGTH = 100`
+
+- **Updated Files to Use Centralized Constants**
+  - `src/prompts/factory.py`: Uses `PROMPT_MAX_*` constants from constants.py
+  - `src/handlers/reliability_health.py`: Uses `HEALTH_SCORE_MAX` instead of hardcoded `100`
+  - `src/utils/table_storage.py`: Uses `TABLE_STORAGE_BATCH_SIZE` for pagination
+  - `src/services/pattern_detector.py`: Uses `HEALTH_SCORE_MAX` instead of hardcoded `100`
+
+- **Updated Files to Use Centralized Logging**
+  - `src/prompts/factory.py`: `from src.utils.logging import get_logger`
+  - `src/handlers/reliability_health.py`: `from src.utils.logging import get_logger`
+  - `src/utils/table_storage.py`: `from src.utils.logging import get_logger`
+  - `src/services/pattern_detector.py`: `from src.utils.logging import get_logger`
+
+### Technical Details
+
+- **Files Modified**: 6 files
+- **Maintainability Impact**: Centralizes magic numbers and logging for easier maintenance
+- **Compatibility**: Fully backward compatible with v2.5.6
+
+---
+
 ## [2.5.6] - 2025-12-02
 
 ### Fixed - Prompts Module Security (Prompt Injection Prevention)

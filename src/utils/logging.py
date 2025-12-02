@@ -4,7 +4,7 @@ Logging Configuration for Datadog
 
 Configures structured logging with Datadog integration using ddtrace.
 
-Version: 2.5.4 - Added log level validation with case-insensitive handling
+Version: 2.5.7 - Added get_logger() convenience function for centralized imports
 """
 import logging
 import structlog
@@ -101,7 +101,7 @@ def setup_logging(log_level: str = "INFO"):
 def get_correlation_id_from_context() -> str:
     """
     Get current correlation ID from Datadog trace context.
-    
+
     Returns:
         Correlation ID (trace ID from Datadog)
     """
@@ -109,3 +109,24 @@ def get_correlation_id_from_context() -> str:
     if span:
         return str(span.trace_id)
     return "no-trace"
+
+
+def get_logger(name: str):
+    """
+    Get a configured structlog logger.
+
+    Convenience function for centralized logger imports.
+    Modules should use this instead of importing structlog directly.
+
+    Args:
+        name: Logger name (typically __name__)
+
+    Returns:
+        Configured structlog BoundLogger instance
+
+    Example:
+        from src.utils.logging import get_logger
+        logger = get_logger(__name__)
+        logger.info("event_occurred", key="value")
+    """
+    return structlog.get_logger(name)

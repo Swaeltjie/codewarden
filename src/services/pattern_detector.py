@@ -4,9 +4,8 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.5.5 - Fixed memory exhaustion bug in review loading
+Version: 2.5.7 - Centralized constants and logging usage
 """
-import structlog
 import json
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timezone, timedelta
@@ -31,8 +30,9 @@ from src.utils.constants import (
     HEALTH_SCORE_RECURRING_PENALTY,
     REVIEW_HISTORY_TABLE_NAME,
 )
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -544,7 +544,7 @@ class PatternDetector:
             if not reviews:
                 return {
                     "repository": repository,
-                    "health_score": 100,
+                    "health_score": HEALTH_SCORE_MAX,
                     "status": "unknown",
                     "message": "No reviews found for analysis period"
                 }
@@ -557,9 +557,9 @@ class PatternDetector:
 
             avg_issues_per_pr = total_issues / total_prs if total_prs > 0 else 0
 
-            # Calculate health score (0-100)
-            # Start with 100, deduct points for issues
-            health_score = 100
+            # Calculate health score (0-HEALTH_SCORE_MAX)
+            # Start with max, deduct points for issues
+            health_score = HEALTH_SCORE_MAX
 
             # Deduct for average issues per PR (up to 30 points)
             if avg_issues_per_pr > 10:

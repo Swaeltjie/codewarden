@@ -4,12 +4,11 @@ Azure Table Storage Utilities
 
 Helper functions for interacting with Azure Table Storage using Managed Identity.
 
-Version: 2.5.4 - Fixed async/sync cleanup mismatch
+Version: 2.5.7 - Centralized constants and logging usage
 """
 from azure.data.tables import TableServiceClient, TableClient
 from azure.identity import DefaultAzureCredential
 from azure.core.exceptions import ResourceExistsError, ServiceRequestError
-import structlog
 from typing import Optional
 from tenacity import (
     retry,
@@ -23,10 +22,12 @@ from src.utils.constants import (
     REQUIRED_TABLES,
     TABLE_STORAGE_RETRY_ATTEMPTS,
     TABLE_STORAGE_RETRY_MIN_WAIT,
-    TABLE_STORAGE_RETRY_MAX_WAIT
+    TABLE_STORAGE_RETRY_MAX_WAIT,
+    TABLE_STORAGE_BATCH_SIZE,
 )
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 def sanitize_odata_value(value: str) -> str:
@@ -238,7 +239,7 @@ def ensure_all_tables_exist():
     )
 
 
-def query_entities_paginated(table_client, query_filter: Optional[str] = None, page_size: int = 100):
+def query_entities_paginated(table_client, query_filter: Optional[str] = None, page_size: int = TABLE_STORAGE_BATCH_SIZE):
     """
     Query entities with pagination to avoid loading all results into memory.
 

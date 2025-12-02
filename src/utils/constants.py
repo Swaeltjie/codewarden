@@ -4,7 +4,7 @@ Application Constants
 
 Centralized constants to avoid magic numbers throughout the codebase.
 
-Version: 2.5.6
+Version: 2.5.7
 """
 
 # Function App Settings
@@ -37,6 +37,12 @@ CHARS_PER_TOKEN_ESTIMATE = 4  # Rough approximation before tiktoken
 
 # Diff parsing
 DEFAULT_CONTEXT_LINES = 3
+
+# Prompt Factory Input Limits (DoS protection)
+PROMPT_MAX_TITLE_LENGTH = 500
+PROMPT_MAX_PATH_LENGTH = 1000
+PROMPT_MAX_MESSAGE_LENGTH = 5000
+PROMPT_MAX_ISSUE_TYPE_LENGTH = 100
 
 # Review limits
 MAX_FILES_PER_REVIEW = 50

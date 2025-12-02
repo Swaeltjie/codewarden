@@ -7,9 +7,8 @@ Provides health and metrics endpoints for monitoring reliability features:
 - Response cache statistics
 - Idempotency statistics
 
-Version: 2.3.0
+Version: 2.5.7 - Centralized constants and logging usage
 """
-import structlog
 from datetime import datetime, timezone
 from typing import Dict, Any
 
@@ -17,12 +16,14 @@ from src.services.circuit_breaker import CircuitBreakerManager
 from src.services.response_cache import ResponseCache
 from src.services.idempotency_checker import IdempotencyChecker
 from src.utils.constants import (
+    HEALTH_SCORE_MAX,
     HEALTH_SCORE_EXCELLENT,
     HEALTH_SCORE_HEALTHY,
     HEALTH_SCORE_MODERATE,
 )
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ReliabilityHealthHandler:
@@ -130,7 +131,7 @@ class ReliabilityHealthHandler:
         Returns:
             Overall health assessment
         """
-        health_score = 100
+        health_score = HEALTH_SCORE_MAX
 
         # Circuit breaker health
         cb_open_count = sum(

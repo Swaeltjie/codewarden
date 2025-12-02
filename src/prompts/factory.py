@@ -4,15 +4,21 @@ Prompt Factory for AI Code Reviews
 
 Generates specialized prompts for different file types and review strategies.
 
-Version: 2.5.6 - Fixed prompt injection vulnerabilities and input validation
+Version: 2.5.7 - Centralized constants usage
 """
 from typing import List, Dict, Optional
 import re
 from src.models.pr_event import FileChange, FileType
 from src.services.diff_parser import DiffParser
-import structlog
+from src.utils.constants import (
+    PROMPT_MAX_TITLE_LENGTH,
+    PROMPT_MAX_PATH_LENGTH,
+    PROMPT_MAX_MESSAGE_LENGTH,
+    PROMPT_MAX_ISSUE_TYPE_LENGTH,
+)
+from src.utils.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class PromptFactory:
@@ -26,10 +32,11 @@ class PromptFactory:
     """
 
     # Maximum lengths for user-controlled inputs (DoS protection)
-    MAX_TITLE_LENGTH = 500
-    MAX_PATH_LENGTH = 1000
-    MAX_MESSAGE_LENGTH = 5000
-    MAX_ISSUE_TYPE_LENGTH = 100
+    # Use centralized constants
+    MAX_TITLE_LENGTH = PROMPT_MAX_TITLE_LENGTH
+    MAX_PATH_LENGTH = PROMPT_MAX_PATH_LENGTH
+    MAX_MESSAGE_LENGTH = PROMPT_MAX_MESSAGE_LENGTH
+    MAX_ISSUE_TYPE_LENGTH = PROMPT_MAX_ISSUE_TYPE_LENGTH
 
     def __init__(self):
         self.diff_parser = DiffParser()
