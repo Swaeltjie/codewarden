@@ -5,6 +5,39 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.3] - 2025-12-02
+
+### Changed - Constants Centralization
+
+- **Centralized Magic Numbers** (`constants.py`)
+  - All hardcoded values now defined in `src/utils/constants.py`
+  - Single source of truth for configuration values
+  - Added new constants: `FUNCTION_TIMEOUT_SECONDS`, `RATE_LIMIT_*`, `MAX_PROMPT_LENGTH`,
+    `DEFAULT_RETRY_AFTER_SECONDS`, `CIRCUIT_BREAKER_LOCK_TIMEOUT_SECONDS`,
+    `CACHE_MAX_WRITES_PER_MINUTE`, `MAX_COMMENT_LENGTH`, `HEALTH_SCORE_*`
+
+- **Updated Files to Use Constants**
+  - `function_app.py` - Timeouts, rate limits, payload size
+  - `ai_client.py` - Timeouts, temperature, token costs, circuit breaker config
+  - `azure_devops.py` - Timeouts, retry delays, comment length
+  - `circuit_breaker.py` - Threshold and timeout defaults
+  - `response_cache.py` - Cache TTL, table name, write rate limits
+  - `feedback_tracker.py` - Feedback thresholds, analysis days
+  - `pattern_detector.py` - Analysis days, health score thresholds
+  - `reliability_health.py` - Health score thresholds
+  - `config.py` - Default values derived from constants
+  - `models/reliability.py` - Circuit breaker defaults
+
+- **Aligned CACHE_TTL_DAYS** - Changed from 7 to 3 days to match actual config
+
+### Technical Details
+
+- **Files Modified**: 11 files, +149/-73 lines
+- **Impact**: Improved maintainability, easier configuration management
+- **Compatibility**: Fully backward compatible with v2.5.2
+
+---
+
 ## [2.5.2] - 2025-12-02
 
 ### Fixed - Async Safety & Input Validation
