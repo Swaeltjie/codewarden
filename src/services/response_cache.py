@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.6.2 - Added timeout and non-blocking table operations
+Version: 2.6.4 - Bug fixes for blocking operations and race conditions
 """
 import asyncio
 import json
@@ -49,10 +49,9 @@ class ResponseCache:
     # Storage rate limiting - class-level shared across instances
     # Use list instead of shared mutable state to prevent race conditions
     _write_timestamps: list = []
-    _write_lock = None  # Will be initialized on first use (using asyncio.Lock for async safety)
-    # Thread-safe lock for initializing the async lock (prevents race on initialization)
-    # Using threading.Lock because class-level initialization can race across threads
-    _lock_init_lock = threading.Lock()
+    # v2.6.4: Use threading.Lock instead of asyncio.Lock for rate limiting
+    # This avoids event loop binding issues and is safe for quick list operations
+    _write_lock = threading.Lock()
 
     def __init__(self, ttl_days: Optional[int] = None) -> None:
         """
@@ -77,27 +76,17 @@ class ResponseCache:
         """
         Check if write rate limit is exceeded (async-safe version).
 
-        Uses asyncio.Lock for proper async concurrency control.
-        NOTE: This is the async version - use this for all async code paths.
+        v2.6.4: Uses threading.Lock instead of asyncio.Lock to avoid event loop
+        binding issues. The operations are quick enough that blocking is minimal.
 
         Returns:
             True if write is allowed, False if rate limited
         """
-        import asyncio
-
-        # Initialize async lock on first use (thread-safe lazy initialization)
-        # Use threading.Lock for class-level initialization to prevent race conditions
-        # where multiple coroutines could simultaneously create locks
-        if ResponseCache._write_lock is None:
-            with ResponseCache._lock_init_lock:
-                # Double-check after acquiring thread lock
-                if ResponseCache._write_lock is None:
-                    ResponseCache._write_lock = asyncio.Lock()
-
         now = datetime.now(timezone.utc).timestamp()
         window_start = now - RATE_LIMIT_WINDOW_SECONDS
 
-        async with ResponseCache._write_lock:
+        # v2.6.4: Use threading.Lock for simplicity and cross-event-loop safety
+        with ResponseCache._write_lock:
             # Clean old timestamps
             ResponseCache._write_timestamps = [
                 ts for ts in ResponseCache._write_timestamps
@@ -440,7 +429,8 @@ class ResponseCache:
             Number of entries invalidated
         """
         try:
-            ensure_table_exists(self.table_name)
+            # v2.6.4: Non-blocking table operations
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             count = 0
@@ -452,9 +442,13 @@ class ResponseCache:
                 safe_file_path = sanitize_odata_value(file_path)
                 query_filter = f"PartitionKey eq '{safe_repository}' and file_path eq '{safe_file_path}'"
 
-                # Use pagination to avoid loading all entities into memory
-                for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
-                    table_client.delete_entity(
+                # v2.6.4: Non-blocking pagination
+                entities = await asyncio.to_thread(
+                    lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+                )
+                for entity in entities:
+                    await asyncio.to_thread(
+                        table_client.delete_entity,
                         partition_key=repository,
                         row_key=entity['RowKey']
                     )
@@ -471,9 +465,13 @@ class ResponseCache:
                 safe_repository = sanitize_odata_value(repository)
                 query_filter = f"PartitionKey eq '{safe_repository}'"
 
-                # Use pagination to avoid loading all entities into memory
-                for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
-                    table_client.delete_entity(
+                # v2.6.4: Non-blocking pagination
+                entities = await asyncio.to_thread(
+                    lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+                )
+                for entity in entities:
+                    await asyncio.to_thread(
+                        table_client.delete_entity,
                         partition_key=repository,
                         row_key=entity['RowKey']
                     )
@@ -506,7 +504,8 @@ class ResponseCache:
             Statistics dictionary
         """
         try:
-            ensure_table_exists(self.table_name)
+            # v2.6.4: Non-blocking table operations
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             # Query cache entries
@@ -525,7 +524,11 @@ class ResponseCache:
             reused_entries = 0
             now = datetime.now(timezone.utc)
 
-            for entity in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
+            # v2.6.4: Non-blocking pagination
+            entities = await asyncio.to_thread(
+                lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+            )
+            for entity in entities:
                 total_entries += 1
                 hit_count = entity.get('hit_count', 1)
                 total_hits += hit_count
@@ -587,21 +590,26 @@ class ResponseCache:
             Number of entries deleted
         """
         try:
-            ensure_table_exists(self.table_name)
+            # v2.6.4: Non-blocking table operations
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             now = datetime.now(timezone.utc)
             deleted_count = 0
 
-            # Process entries in paginated batches
-            for entity in query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE):
+            # v2.6.4: Non-blocking pagination
+            entities = await asyncio.to_thread(
+                lambda: list(query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE))
+            )
+            for entity in entities:
                 expires_at = entity.get('expires_at')
                 if isinstance(expires_at, str):
                     expires_at = datetime.fromisoformat(expires_at)
 
                 if expires_at and expires_at < now:
-                    # Delete expired entry
-                    table_client.delete_entity(
+                    # v2.6.4: Non-blocking delete
+                    await asyncio.to_thread(
+                        table_client.delete_entity,
                         partition_key=entity['PartitionKey'],
                         row_key=entity['RowKey']
                     )

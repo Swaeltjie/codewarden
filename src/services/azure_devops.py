@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.6.3 - Non-blocking operations and connection close verification
+Version: 2.6.4 - Bug fixes for connection close error handling
 """
 import aiohttp
 import asyncio
@@ -869,6 +869,7 @@ class AzureDevOpsClient:
         Close the HTTP session and credential.
 
         v2.6.3: Added connection close verification and graceful shutdown.
+        v2.6.4: Improved error handling for connector operations.
         """
         # Use lock to prevent concurrent close calls
         async with self._session_lock:
@@ -880,17 +881,25 @@ class AzureDevOpsClient:
                     # Close the session
                     await self._session.close()
 
-                    # v2.6.3: Wait for connection pool to gracefully shutdown
-                    # aiohttp doesn't immediately close all connections on session.close()
-                    if connector and not connector.closed:
-                        # Brief delay allows pending connections to close gracefully
-                        await asyncio.sleep(0.250)
+                    # v2.6.4: Wrap connector operations in separate try block
+                    try:
+                        # v2.6.3: Wait for connection pool to gracefully shutdown
+                        # aiohttp doesn't immediately close all connections on session.close()
+                        if connector and not connector.closed:
+                            # Brief delay allows pending connections to close gracefully
+                            await asyncio.sleep(0.250)
 
-                    # v2.6.3: Verify session is actually closed
-                    if self._session.closed:
-                        logger.debug("devops_session_closed_verified")
-                    else:
-                        logger.warning("devops_session_close_incomplete")
+                        # v2.6.3: Verify session is actually closed
+                        if self._session and self._session.closed:
+                            logger.debug("devops_session_closed_verified")
+                        elif self._session:
+                            logger.warning("devops_session_close_incomplete")
+                    except Exception as e:
+                        # v2.6.4: Don't let verification errors affect cleanup
+                        logger.warning(
+                            "devops_session_verification_error",
+                            error=str(e)
+                        )
 
                 except Exception as e:
                     logger.warning("devops_session_close_error", error=str(e))

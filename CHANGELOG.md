@@ -5,6 +5,52 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.4] - 2025-12-03
+
+### Fixed - Bug Fixes
+
+**Critical: Missing asyncio.to_thread in ResponseCache methods**
+- Fixed `invalidate_cache()`, `get_cache_statistics()`, and `cleanup_expired_entries()` methods
+- These methods were still using blocking Table Storage operations
+- Location: `src/services/response_cache.py:442-638`
+
+**High: Race Condition in ResponseCache Lock Initialization**
+- Replaced asyncio.Lock with threading.Lock for rate limiting
+- asyncio.Lock is event-loop bound and caused issues across workers
+- Using threading.Lock is safe for quick list operations
+- Location: `src/services/response_cache.py:52-89`
+
+**Medium: Missing Type Validation for AI Response Issues**
+- Added validation that `issues` field from AI response is a list
+- Prevents TypeError when AI returns malformed JSON
+- Location: `src/models/review_result.py:286-294`
+
+**Medium: Error Handling in Azure DevOps Session Close**
+- Wrapped connector verification in separate try block
+- Verification errors no longer affect cleanup
+- Session reference properly checked before access
+- Location: `src/services/azure_devops.py:884-902`
+
+### Updated Files
+| File | Changes |
+|------|---------|
+| `src/services/response_cache.py` | Non-blocking ops in 3 methods, threading.Lock |
+| `src/models/review_result.py` | Type validation for issues list |
+| `src/services/azure_devops.py` | Improved close error handling |
+| `src/utils/config.py` | Version 2.6.4 |
+| `CHANGELOG.md` | This release |
+
+### Bug Fixes Summary
+
+| Issue Type | Count | Impact |
+|------------|-------|--------|
+| Blocking Async Operations | 3 methods | Event loop no longer blocked |
+| Race Condition | 1 | Cross-worker lock issues fixed |
+| Type Validation | 1 | Malformed AI responses handled |
+| Error Handling | 1 | Cleanup more robust |
+
+---
+
 ## [2.6.3] - 2025-12-03
 
 ### Fixed - Non-Blocking Table Operations

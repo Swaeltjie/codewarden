@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.6.2 - Reliability improvements
+Version: 2.6.4 - Bug fixes for type validation
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -283,7 +283,17 @@ class ReviewResult(BaseModel):
         # Limit individual error logs to prevent log flooding (DoS protection)
         MAX_LOGGED_ERRORS = 10
 
-        for idx, issue_data in enumerate(ai_json.get('issues', [])):
+        # v2.6.4: Validate that issues is a list to prevent TypeError
+        issues_data = ai_json.get('issues', [])
+        if not isinstance(issues_data, list):
+            _logger.warning(
+                "ai_response_issues_not_list",
+                type=type(issues_data).__name__,
+                pr_id=pr_id
+            )
+            issues_data = []
+
+        for idx, issue_data in enumerate(issues_data):
             # Use provided file_path as default if not in issue
             if 'file_path' not in issue_data and file_path:
                 issue_data['file_path'] = file_path
