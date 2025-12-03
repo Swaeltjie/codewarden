@@ -4,10 +4,11 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.5.14 - Input validation fixes
 """
 import uuid
 import json
+import re
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from collections import Counter, defaultdict
@@ -179,9 +180,27 @@ class FeedbackTracker:
 
         try:
             # Get PR threads/comments
-            # Note: This is a simplified version - Azure DevOps API would need repository_id
-            # For production, you'd need to store repository_id in review history
-            repository_id = review.get('PartitionKey')  # Assuming PartitionKey is repo ID
+            # Get repository_id from review data - prefer explicit field over PartitionKey
+            repository_id = review.get('repository_id') or review.get('PartitionKey')
+
+            # Validate repository_id format (Azure DevOps uses UUID format)
+            if not repository_id:
+                logger.warning(
+                    "missing_repository_id",
+                    review_id=review.get('RowKey'),
+                    pr_id=pr_id
+                )
+                return 0
+
+            # Validate UUID format for repository_id
+            uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            if not re.match(uuid_pattern, repository_id, re.IGNORECASE):
+                logger.warning(
+                    "invalid_repository_id_format",
+                    repository_id=repository_id[:50] if repository_id else None,
+                    review_id=review.get('RowKey')
+                )
+                return 0
 
             threads = await devops._get_pr_threads(project, repository_id, pr_id)
 
@@ -454,11 +473,21 @@ class FeedbackTracker:
         Get summary of feedback across all repositories.
 
         Args:
-            days: Number of days to include
+            days: Number of days to include (1-365)
 
         Returns:
             Summary statistics
         """
+        # Validate days parameter (prevents DoS via excessive date range queries)
+        if not isinstance(days, int) or days < 1 or days > 365:
+            logger.warning("invalid_days_parameter", days=days)
+            return {
+                "error": "days must be an integer between 1 and 365",
+                "total_feedback": 0,
+                "positive_feedback": 0,
+                "negative_feedback": 0
+            }
+
         ensure_table_exists('feedback')
         table_client = get_table_client('feedback')
 

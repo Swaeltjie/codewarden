@@ -5,6 +5,60 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.14] - 2025-12-03
+
+### Fixed - Security & Reliability Issues from Code Review
+
+- **Critical: Race Condition in Response Cache Lock Initialization** (`response_cache.py`)
+  - Fixed race condition where multiple coroutines could simultaneously create locks
+  - Changed `_lock_init_lock` from lazy-initialized `asyncio.Lock` to pre-initialized `threading.Lock`
+  - Thread-safe initialization now guaranteed for class-level async lock
+
+- **Critical: Unvalidated Repository ID in Feedback Tracker** (`feedback_tracker.py`)
+  - Added explicit `repository_id` field check with fallback to `PartitionKey`
+  - Added UUID format validation using regex pattern
+  - Returns 0 with warning log when repository_id is missing or invalid
+  - Prevents API calls with malformed repository identifiers
+
+- **High: Missing Input Validation on days Parameter** (`feedback_tracker.py`)
+  - Added validation in `get_feedback_summary()` requiring integer between 1-365
+  - Returns standardized error response for invalid values
+  - Prevents DoS via excessive date range queries
+
+- **High: Unprotected Exception Logging in AI Response Parsing** (`review_result.py`)
+  - Added `MAX_LOGGED_ERRORS = 10` limit on individual error logs
+  - Logs summary after limit reached to prevent log flooding
+  - Prevents DoS attacks via malicious AI responses with many invalid issues
+
+- **High: Missing Overflow Protection in Aggregation** (`review_result.py`)
+  - Added `MAX_TOKENS = 9999999` and `MAX_COST = 9999.99` caps
+  - Caps values at Pydantic field limits during aggregation
+  - Logs warning when overflow protection activates
+  - Prevents validation errors when aggregating many results
+
+- **High: Weak Branch Reference Validation** (`pr_event.py`)
+  - Added explicit check for path traversal pattern `..`
+  - Added check for double slashes `//`
+  - Added check for trailing slash
+  - More restrictive regex requiring alphanumeric start/end
+  - Prevents potential path traversal if branch names used in file operations
+
+### Technical Details
+
+- **Files Modified**: 6 files
+  - `src/services/response_cache.py` - Race condition fix
+  - `src/services/feedback_tracker.py` - Input validation
+  - `src/models/review_result.py` - Overflow protection
+  - `src/models/pr_event.py` - Branch validation
+  - `src/models/reliability.py` - Version update
+  - `src/services/azure_devops.py` - Version update
+  - `src/utils/config.py` - Version update
+- **Security Impact**: Fixes race conditions, input validation gaps, DoS vectors
+- **Reliability Impact**: Improved error handling and overflow protection
+- **Compatibility**: Fully backward compatible with v2.5.13
+
+---
+
 ## [2.5.13] - 2025-12-02
 
 ### Changed - Additional Inline Comments

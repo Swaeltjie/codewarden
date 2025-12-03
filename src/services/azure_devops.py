@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.5.14
 """
 import aiohttp
 import asyncio

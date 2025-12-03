@@ -4,9 +4,10 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.5.14 - Race condition fixes
 """
 import json
+import threading
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 
@@ -48,7 +49,9 @@ class ResponseCache:
     # Use list instead of shared mutable state to prevent race conditions
     _write_timestamps: list = []
     _write_lock = None  # Will be initialized on first use (using asyncio.Lock for async safety)
-    _lock_init_lock = None  # Lock for initializing the main lock (prevents race on initialization)
+    # Thread-safe lock for initializing the async lock (prevents race on initialization)
+    # Using threading.Lock because class-level initialization can race across threads
+    _lock_init_lock = threading.Lock()
 
     def __init__(self, ttl_days: Optional[int] = None) -> None:
         """
@@ -81,17 +84,12 @@ class ResponseCache:
         """
         import asyncio
 
-        # Initialize async lock on first use (lazy initialization with double-check)
-        # Use a class-level check to prevent multiple lock creation
+        # Initialize async lock on first use (thread-safe lazy initialization)
+        # Use threading.Lock for class-level initialization to prevent race conditions
+        # where multiple coroutines could simultaneously create locks
         if ResponseCache._write_lock is None:
-            # This could still race, but asyncio.Lock() is cheap and creating
-            # multiple locks is harmless - only one will be used
-            # The critical section below with 'async with' ensures thread safety
-            if ResponseCache._lock_init_lock is None:
-                ResponseCache._lock_init_lock = asyncio.Lock()
-
-            async with ResponseCache._lock_init_lock:
-                # Double-check after acquiring init lock
+            with ResponseCache._lock_init_lock:
+                # Double-check after acquiring thread lock
                 if ResponseCache._write_lock is None:
                     ResponseCache._write_lock = asyncio.Lock()
 

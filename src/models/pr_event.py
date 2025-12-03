@@ -4,7 +4,7 @@ Pydantic Models for Pull Request Events
 
 Data models for Azure DevOps webhook payloads and file changes.
 
-Version: 2.5.8
+Version: 2.5.14 - Enhanced branch validation
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -62,8 +62,22 @@ class PREvent(BaseModel):
         if '\n' in v or '\r' in v:
             raise ValueError("Branch reference contains newlines")
 
+        # Check for path traversal patterns BEFORE regex
+        if '..' in v:
+            raise ValueError("Branch reference contains path traversal pattern")
+
+        # Check for double slashes (malformed paths)
+        if '//' in v:
+            raise ValueError("Branch reference contains invalid double slashes")
+
+        # Check for trailing slash
+        if v.endswith('/'):
+            raise ValueError("Branch reference cannot end with slash")
+
         # Valid Azure DevOps branch format: refs/heads/branch-name
-        if not re.match(r'^refs/(heads|tags)/[\w\-\./_]+$', v):
+        # More restrictive pattern: alphanumeric, dash, underscore, forward slash
+        # Dots allowed but not consecutive (..) - checked above
+        if not re.match(r'^refs/(heads|tags)/[a-zA-Z0-9][a-zA-Z0-9\-_./]*[a-zA-Z0-9]$|^refs/(heads|tags)/[a-zA-Z0-9]$', v):
             raise ValueError(f"Invalid branch reference format: {v}")
 
         return v
