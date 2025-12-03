@@ -4,8 +4,9 @@ Idempotency Checker
 
 Prevents duplicate PR review processing when webhooks are retried.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.6.3 - Non-blocking table operations
 """
+import asyncio
 from typing import Optional, Dict
 from datetime import datetime, timezone
 
@@ -63,7 +64,8 @@ class IdempotencyChecker:
             - previous_result_summary: Summary from previous processing (if duplicate)
         """
         try:
-            ensure_table_exists(self.table_name)
+            # v2.6.3: Run blocking table operations in thread pool
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             # Generate request ID
@@ -78,7 +80,9 @@ class IdempotencyChecker:
             partition_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
             try:
-                entity = table_client.get_entity(
+                # v2.6.3: Non-blocking get_entity
+                entity = await asyncio.to_thread(
+                    table_client.get_entity,
                     partition_key=partition_key,
                     row_key=request_id
                 )
@@ -93,10 +97,14 @@ class IdempotencyChecker:
                     processing_count=entity.get('processing_count', 1)
                 )
 
-                # Update last seen time and increment count
+                # Update last seen time and increment count (v2.6.3: non-blocking)
                 entity['last_seen_at'] = datetime.now(timezone.utc)
                 entity['processing_count'] = entity.get('processing_count', 1) + 1
-                table_client.update_entity(entity, mode='merge')
+                await asyncio.to_thread(
+                    table_client.update_entity,
+                    entity,
+                    mode='merge'
+                )
 
                 return True, entity.get('result_summary', 'unknown')
 
@@ -162,7 +170,8 @@ class IdempotencyChecker:
             result_summary: Brief summary of result
         """
         try:
-            ensure_table_exists(self.table_name)
+            # v2.6.3: Run blocking table operations in thread pool
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             # Create idempotency entity
@@ -175,8 +184,11 @@ class IdempotencyChecker:
                 result_summary=result_summary
             )
 
-            # Upsert entity
-            table_client.upsert_entity(entity.to_table_entity())
+            # v2.6.3: Non-blocking upsert
+            await asyncio.to_thread(
+                table_client.upsert_entity,
+                entity.to_table_entity()
+            )
 
             logger.info(
                 "request_recorded",
@@ -215,7 +227,8 @@ class IdempotencyChecker:
             result_summary: Summary of review result
         """
         try:
-            ensure_table_exists(self.table_name)
+            # v2.6.3: Run blocking table operations in thread pool
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             request_id = IdempotencyEntity.create_request_id(
@@ -227,18 +240,23 @@ class IdempotencyChecker:
 
             partition_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-            # Get existing entity
+            # Get existing entity (v2.6.3: non-blocking)
             try:
-                entity = table_client.get_entity(
+                entity = await asyncio.to_thread(
+                    table_client.get_entity,
                     partition_key=partition_key,
                     row_key=request_id
                 )
 
-                # Update result
+                # Update result (v2.6.3: non-blocking)
                 entity['result_summary'] = result_summary
                 entity['last_seen_at'] = datetime.now(timezone.utc)
 
-                table_client.update_entity(entity, mode='merge')
+                await asyncio.to_thread(
+                    table_client.update_entity,
+                    entity,
+                    mode='merge'
+                )
 
                 logger.info(
                     "idempotency_result_updated",
@@ -273,7 +291,8 @@ class IdempotencyChecker:
             Statistics dictionary
         """
         try:
-            ensure_table_exists(self.table_name)
+            # v2.6.3: Run blocking table operations in thread pool
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             # Query recent entries
@@ -283,8 +302,17 @@ class IdempotencyChecker:
             total_requests = 0
             duplicate_requests = 0
 
-            # Use pagination to avoid loading all entities into memory
-            for entity in query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE):
+            # v2.6.3: Run blocking pagination in thread pool with safety limit
+            MAX_ENTRIES = 10000
+            entities = await asyncio.to_thread(
+                lambda: list(
+                    entity for i, entity in enumerate(
+                        query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE)
+                    ) if i < MAX_ENTRIES
+                )
+            )
+
+            for entity in entities:
                 total_requests += 1
                 if entity.get('processing_count', 1) > 1:
                     duplicate_requests += 1

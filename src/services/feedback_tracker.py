@@ -4,8 +4,9 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.5.14 - Input validation fixes
+Version: 2.6.3 - Non-blocking table operations
 """
+import asyncio
 import uuid
 import json
 import re
@@ -91,7 +92,8 @@ class FeedbackTracker:
         """
         logger.info("feedback_collection_started", hours=hours)
 
-        ensure_table_exists('feedback')
+        # v2.6.3: Run blocking table operations in thread pool
+        await asyncio.to_thread(ensure_table_exists, 'feedback')
         table_client = get_table_client('feedback')
 
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -99,16 +101,18 @@ class FeedbackTracker:
 
         try:
             # Get recent reviews from history to find relevant PRs
+            # v2.6.3: Ensure reviewhistory table exists
+            await asyncio.to_thread(ensure_table_exists, 'reviewhistory')
             history_table = get_table_client('reviewhistory')
 
             # Query reviews from the last N hours
             # Note: Table Storage query with time filter
             query_filter = f"reviewed_at ge datetime'{cutoff_time.isoformat()}'"
 
-            # Use pagination to avoid loading all reviews into memory
-            recent_reviews = []
-            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
-                recent_reviews.append(review)
+            # v2.6.3: Use pagination with non-blocking thread pool
+            recent_reviews = await asyncio.to_thread(
+                lambda: list(query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+            )
 
             logger.info(
                 "recent_reviews_found",
@@ -219,8 +223,11 @@ class FeedbackTracker:
                 )
 
                 if feedback:
-                    # Store feedback
-                    table_client.upsert_entity(feedback.to_table_entity())
+                    # v2.6.3: Non-blocking upsert
+                    await asyncio.to_thread(
+                        table_client.upsert_entity,
+                        feedback.to_table_entity()
+                    )
                     feedback_count += 1
 
         except Exception as e:
@@ -372,7 +379,8 @@ class FeedbackTracker:
         """
         logger.info("learning_context_requested", repository=repository)
 
-        ensure_table_exists('feedback')
+        # v2.6.3: Run blocking table operations in thread pool
+        await asyncio.to_thread(ensure_table_exists, 'feedback')
         table_client = get_table_client('feedback')
 
         try:
@@ -380,10 +388,10 @@ class FeedbackTracker:
             safe_repository = sanitize_odata_value(repository)
             query_filter = f"PartitionKey eq '{safe_repository}'"
 
-            # Use pagination to avoid loading all entities into memory
-            feedback_entries = []
-            for entry in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
-                feedback_entries.append(entry)
+            # v2.6.3: Use pagination with non-blocking thread pool
+            feedback_entries = await asyncio.to_thread(
+                lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+            )
 
             if not feedback_entries:
                 logger.info("no_feedback_found", repository=repository)
@@ -488,7 +496,8 @@ class FeedbackTracker:
                 "negative_feedback": 0
             }
 
-        ensure_table_exists('feedback')
+        # v2.6.3: Run blocking table operations in thread pool
+        await asyncio.to_thread(ensure_table_exists, 'feedback')
         table_client = get_table_client('feedback')
 
         cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
@@ -497,10 +506,10 @@ class FeedbackTracker:
             # Query feedback from last N days
             query_filter = f"feedback_received_at ge datetime'{cutoff_time.isoformat()}'"
 
-            # Use pagination to avoid loading all entities into memory
-            feedback_entries = []
-            for entry in query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
-                feedback_entries.append(entry)
+            # v2.6.3: Use pagination with non-blocking thread pool
+            feedback_entries = await asyncio.to_thread(
+                lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+            )
 
             total_count = len(feedback_entries)
             positive_count = sum(1 for e in feedback_entries if e.get('is_positive'))

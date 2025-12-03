@@ -5,6 +5,52 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3] - 2025-12-03
+
+### Fixed - Non-Blocking Table Operations
+
+**Critical: Non-Blocking Operations in Response Cache**
+- Wrapped all blocking Table Storage operations with `asyncio.to_thread()`
+- Fixed `get_cached_review()` to not block the event loop
+- Fixed `ensure_table_exists()`, `get_entity()`, `delete_entity()`, `update_entity()` calls
+- Location: `src/services/response_cache.py:70-152`
+
+**Critical: Non-Blocking Operations in Idempotency Checker**
+- Wrapped all blocking Table Storage operations with `asyncio.to_thread()`
+- Fixed `is_duplicate_request()`, `record_request()`, `update_result()`, `get_statistics()`
+- Location: `src/services/idempotency_checker.py:43-336`
+
+**High: Non-Blocking Operations in Feedback Tracker**
+- Wrapped all blocking Table Storage operations with `asyncio.to_thread()`
+- Fixed `collect_recent_feedback()`, `get_learning_context()`, `get_feedback_summary()`
+- Fixed `upsert_entity()` and `query_entities_paginated()` calls
+- Location: `src/services/feedback_tracker.py:77-530`
+
+**High: Connection Close Verification in Azure DevOps Client**
+- Added graceful shutdown delay for connection pool cleanup
+- Added verification logging to confirm session closure
+- Improved connector cleanup handling
+- Location: `src/services/azure_devops.py:867-907`
+
+### Updated Files
+| File | Changes |
+|------|---------|
+| `src/services/response_cache.py` | Non-blocking get_cached_review |
+| `src/services/idempotency_checker.py` | Non-blocking all methods |
+| `src/services/feedback_tracker.py` | Non-blocking all table operations |
+| `src/services/azure_devops.py` | Connection close verification |
+| `src/utils/config.py` | Version 2.6.3 |
+| `CHANGELOG.md` | This release |
+
+### Reliability Enhancements Summary
+
+| Issue Type | Count | Impact |
+|------------|-------|--------|
+| Blocking Async Operations | 4 files | Event loop no longer blocked by Table Storage |
+| Connection Management | 1 file | Graceful session shutdown verified |
+
+---
+
 ## [2.6.2] - 2025-12-03
 
 ### Fixed - Reliability Improvements

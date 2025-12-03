@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.5.14
+Version: 2.6.3 - Non-blocking operations and connection close verification
 """
 import aiohttp
 import asyncio
@@ -865,13 +865,33 @@ class AzureDevOpsClient:
             return []
 
     async def close(self) -> None:
-        """Close the HTTP session and credential."""
+        """
+        Close the HTTP session and credential.
+
+        v2.6.3: Added connection close verification and graceful shutdown.
+        """
         # Use lock to prevent concurrent close calls
         async with self._session_lock:
             if self._session and not self._session.closed:
                 try:
+                    # Get connector reference before closing
+                    connector = self._session.connector
+
+                    # Close the session
                     await self._session.close()
-                    logger.debug("devops_session_closed")
+
+                    # v2.6.3: Wait for connection pool to gracefully shutdown
+                    # aiohttp doesn't immediately close all connections on session.close()
+                    if connector and not connector.closed:
+                        # Brief delay allows pending connections to close gracefully
+                        await asyncio.sleep(0.250)
+
+                    # v2.6.3: Verify session is actually closed
+                    if self._session.closed:
+                        logger.debug("devops_session_closed_verified")
+                    else:
+                        logger.warning("devops_session_close_incomplete")
+
                 except Exception as e:
                     logger.warning("devops_session_close_error", error=str(e))
                 finally:

@@ -231,15 +231,17 @@ class ResponseCache:
                 logger.warning("unsafe_cache_file_path", file_path=file_path)
                 return None
 
-            ensure_table_exists(self.table_name)
+            # v2.6.3: Run blocking table operations in thread pool
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             # Generate content hash
             content_hash = CacheEntity.create_content_hash(diff_content, file_path)
 
-            # Try to fetch cached entity
+            # Try to fetch cached entity (v2.6.3: non-blocking)
             try:
-                entity = table_client.get_entity(
+                entity = await asyncio.to_thread(
+                    table_client.get_entity,
                     partition_key=repository,
                     row_key=content_hash
                 )
@@ -260,8 +262,12 @@ class ResponseCache:
                         content_hash=content_hash,
                         expired_at=expires_at
                     )
-                    # Delete expired entry
-                    table_client.delete_entity(partition_key=repository, row_key=content_hash)
+                    # v2.6.3: Delete expired entry (non-blocking)
+                    await asyncio.to_thread(
+                        table_client.delete_entity,
+                        partition_key=repository,
+                        row_key=content_hash
+                    )
                     return None
 
                 # Cache hit!
@@ -276,10 +282,14 @@ class ResponseCache:
                     cost_saved=entity.get('estimated_cost', 0)
                 )
 
-                # Update hit count and last accessed time
+                # Update hit count and last accessed time (v2.6.3: non-blocking)
                 entity['hit_count'] = entity.get('hit_count', 1) + 1
                 entity['last_accessed_at'] = now
-                table_client.update_entity(entity, mode='merge')
+                await asyncio.to_thread(
+                    table_client.update_entity,
+                    entity,
+                    mode='merge'
+                )
 
                 # Deserialize review result
                 review_json = entity.get('review_result_json', '{}')
