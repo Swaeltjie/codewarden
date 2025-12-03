@@ -4,9 +4,9 @@ Circuit Breaker Pattern
 
 Prevents cascading failures when external services are down.
 
-Version: 2.5.10 - Centralized logging usage
+Version: 2.6.5 - Type hints for decorator
 """
-from typing import Callable, Any, Optional, Dict
+from typing import Callable, Any, Optional, Dict, TypeVar, ParamSpec
 from datetime import datetime, timezone, timedelta
 import asyncio
 from functools import wraps
@@ -24,6 +24,10 @@ from src.utils.constants import (
 LOCK_TIMEOUT_SECONDS = CIRCUIT_BREAKER_LOCK_TIMEOUT_SECONDS
 
 logger = get_logger(__name__)
+
+# Type variables for decorator type hints
+P = ParamSpec("P")
+T = TypeVar("T")
 
 
 class CircuitBreakerError(Exception):
@@ -307,9 +311,9 @@ def with_circuit_breaker(
     Returns:
         Decorated function
     """
-    def decorator(func: Callable):
+    def decorator(func: Callable[P, T]) -> Callable[P, T]:
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
             breaker = await CircuitBreakerManager.get_breaker(
                 service_name=service_name,
                 failure_threshold=failure_threshold,
@@ -318,5 +322,5 @@ def with_circuit_breaker(
 
             return await breaker.call(func, *args, **kwargs)
 
-        return wrapper
+        return wrapper  # type: ignore[return-value]
     return decorator

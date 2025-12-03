@@ -6,11 +6,11 @@ Handles interactions with OpenAI API for code review analysis.
 Includes retry logic, rate limiting, structured response parsing,
 and circuit breaker protection.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.6.5 - Type hints for inner functions
 """
 import asyncio
 from openai import AsyncOpenAI
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 import json
 from tenacity import (
     retry,
@@ -184,7 +184,7 @@ class AIClient:
             )
 
             # Define the API call function for circuit breaker
-            async def make_api_call():
+            async def make_api_call() -> Any:
                 # Add per-request timeout to prevent hanging
                 return await asyncio.wait_for(
                     self.client.chat.completions.create(

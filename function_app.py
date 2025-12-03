@@ -890,7 +890,7 @@ def _get_client_ip(req: func.HttpRequest) -> str:
 import atexit
 
 
-def _cleanup_resources():
+def _cleanup_resources() -> None:
     """
     Cleanup resources on application shutdown.
 

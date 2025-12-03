@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.6.4 - Bug fixes for connection close error handling
+Version: 2.6.5 - Type hints for inner functions
 """
 import aiohttp
 import asyncio
@@ -248,7 +248,7 @@ class AzureDevOpsClient:
         )
 
         # Define API call function
-        async def make_api_call():
+        async def make_api_call() -> Dict:
             session = await self._get_session()
             async with session.get(url) as response:
                 if response.status == 401:

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.6.5] - 2025-12-03
 
+### Changed - Consolidated Constants & Type Hints
+
+**Type Hints Added:**
+- `circuit_breaker.py`: Added `ParamSpec` and `TypeVar` for decorator type hints
+- `ai_client.py`: Added return type hint for inner `make_api_call()` function
+- `azure_devops.py`: Added return type hint for inner `make_api_call()` function
+- `function_app.py`: Added `-> None` return type for `_cleanup_resources()`
+
 ### Changed - Consolidated Constants
 
 All magic numbers and configuration values are now centralized in `src/utils/constants.py`.
@@ -35,6 +43,10 @@ All magic numbers and configuration values are now centralized in `src/utils/con
 | `src/models/review_result.py` | Use centralized error/limit constants |
 | `src/services/idempotency_checker.py` | Use `MAX_IDEMPOTENCY_ENTRIES` |
 | `src/services/pattern_detector.py` | Use `MAX_PATTERN_REVIEWS` |
+| `src/services/circuit_breaker.py` | Decorator type hints with ParamSpec |
+| `src/services/ai_client.py` | Inner function type hints |
+| `src/services/azure_devops.py` | Inner function type hints |
+| `function_app.py` | `_cleanup_resources()` return type |
 | `src/utils/config.py` | Version 2.6.5 |
 | `CHANGELOG.md` | This release |
 
