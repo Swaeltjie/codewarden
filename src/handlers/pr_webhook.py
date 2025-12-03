@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.6.0 - Universal code review (any file type)
+Version: 2.6.2 - Reliability improvements
 """
 import asyncio
 from typing import List, Optional, Tuple
@@ -57,15 +57,27 @@ class PRWebhookHandler:
         self._review_semaphore = asyncio.Semaphore(self.settings.MAX_CONCURRENT_REVIEWS)
 
     async def __aenter__(self) -> "PRWebhookHandler":
-        """Async context manager entry - initialize resources."""
+        """
+        Async context manager entry - initialize resources.
+
+        v2.6.2: Enhanced cleanup to handle all partial initialization scenarios.
+        """
         try:
             self.devops_client = await AzureDevOpsClient().__aenter__()
             self.ai_client = await AIClient().__aenter__()
             return self
         except Exception:
-            # Clean up any partially initialized resources
+            # v2.6.2: Clean up ALL partially initialized resources
+            if self.ai_client:
+                try:
+                    await self.ai_client.close()
+                except Exception:
+                    pass  # Best effort cleanup
             if self.devops_client:
-                await self.devops_client.close()
+                try:
+                    await self.devops_client.close()
+                except Exception:
+                    pass  # Best effort cleanup
             raise
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
@@ -698,8 +710,8 @@ class PRWebhookHandler:
             strategy: Review strategy used
         """
         try:
-            # Ensure table exists (moved inside try block for proper error handling)
-            ensure_table_exists('reviewhistory')
+            # v2.6.2: Run blocking table operations in thread pool to avoid blocking event loop
+            await asyncio.to_thread(ensure_table_exists, 'reviewhistory')
             table_client = get_table_client('reviewhistory')
 
             # Create review history entity
@@ -717,8 +729,11 @@ class PRWebhookHandler:
             history_entity.review_strategy = strategy.value
             history_entity.ai_model = self.settings.OPENAI_MODEL
 
-            # Save to table storage
-            table_client.upsert_entity(history_entity.to_table_entity())
+            # v2.6.2: Run blocking table upsert in thread pool
+            await asyncio.to_thread(
+                table_client.upsert_entity,
+                history_entity.to_table_entity()
+            )
 
             logger.info(
                 "review_history_saved",

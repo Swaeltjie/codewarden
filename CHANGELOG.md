@@ -5,6 +5,64 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2025-12-03
+
+### Fixed - Reliability Improvements
+
+**Critical: Enhanced Async Resource Cleanup**
+- `PRWebhookHandler.__aenter__`: Now properly cleans up both `ai_client` and `devops_client` on partial initialization failure
+- Added try/except around cleanup to ensure best-effort resource release
+- Location: `src/handlers/pr_webhook.py:59-81`
+
+**Critical: Fixed Session Race Condition in Azure DevOps Client**
+- All session operations now protected by asyncio.Lock
+- Token refresh failures now properly handled with session reinitialization
+- Location: `src/services/azure_devops.py:129-192`
+
+**High: Non-Blocking Table Storage Operations**
+- Wrapped `ensure_table_exists()` and `upsert_entity()` calls with `asyncio.to_thread()`
+- Prevents blocking the event loop during table operations
+- Location: `src/handlers/pr_webhook.py:713-736`
+
+**High: Cache Write Timeout Protection**
+- Added 5-second timeout to cache write operations
+- Prevents hanging on slow Table Storage responses
+- Location: `src/services/response_cache.py:380-395`
+
+**High: Resilient Result Aggregation**
+- Added per-result exception handling in `ReviewResult.aggregate()`
+- One corrupted result no longer breaks entire aggregation
+- Added attribute validation before accessing result properties
+- Location: `src/models/review_result.py:402-441`
+
+**Medium: Rate Limiter Memory Bounds**
+- Added `MAX_TRACKED_CLIENTS = 10000` limit
+- Periodic cleanup of stale clients every 60 seconds
+- Prevents unbounded dictionary growth under high client diversity
+- Location: `function_app.py:749-838`
+
+### Updated Files
+| File | Changes |
+|------|---------|
+| `src/handlers/pr_webhook.py` | Async cleanup, non-blocking table ops |
+| `src/services/azure_devops.py` | Session race condition fix |
+| `src/services/response_cache.py` | Cache write timeout, non-blocking ops |
+| `src/models/review_result.py` | Resilient aggregation |
+| `function_app.py` | Rate limiter memory bounds |
+| `src/utils/config.py` | Version 2.6.2 |
+| `CHANGELOG.md` | This release |
+
+### Reliability Enhancements Summary
+
+| Issue Type | Count | Impact |
+|------------|-------|--------|
+| Critical Race Conditions | 2 | Fixed concurrent access issues |
+| Blocking Async Operations | 3 | Event loop no longer blocked |
+| Missing Error Handling | 2 | Graceful degradation on failures |
+| Memory Management | 1 | Prevented unbounded growth |
+
+---
+
 ## [2.6.1] - 2025-12-03
 
 ### Changed - Focused File Categories

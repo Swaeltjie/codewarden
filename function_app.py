@@ -752,7 +752,12 @@ class RateLimiter:
 
     Uses a sliding window counter per client IP to prevent abuse.
     Limits are per-function-instance (resets on cold start).
+
+    v2.6.2: Added MAX_TRACKED_CLIENTS to prevent unbounded memory growth.
     """
+
+    # v2.6.2: Maximum number of tracked clients to prevent memory exhaustion
+    MAX_TRACKED_CLIENTS: int = 10000
 
     def __init__(self, max_requests: int = 100, window_seconds: int = 60):
         """
@@ -766,6 +771,7 @@ class RateLimiter:
         self.window_seconds = window_seconds
         self._requests: Dict[str, List[float]] = {}
         self._lock = asyncio.Lock()
+        self._last_cleanup: float = 0.0
 
     async def is_rate_limited(self, client_id: str) -> bool:
         """
@@ -781,6 +787,13 @@ class RateLimiter:
         window_start = now - self.window_seconds
 
         async with self._lock:
+            # v2.6.2: Periodic cleanup to prevent memory growth
+            # Run cleanup every minute or when too many clients tracked
+            if (len(self._requests) > self.MAX_TRACKED_CLIENTS or
+                    now - self._last_cleanup > 60):
+                self._cleanup_stale_clients(window_start)
+                self._last_cleanup = now
+
             # Get or create request list for client
             if client_id not in self._requests:
                 self._requests[client_id] = []
@@ -803,6 +816,26 @@ class RateLimiter:
             # Record this request
             self._requests[client_id].append(now)
             return False
+
+    def _cleanup_stale_clients(self, window_start: float) -> None:
+        """
+        Remove clients with no recent requests to prevent memory growth.
+
+        v2.6.2: Added to prevent unbounded dictionary growth.
+        """
+        before_count = len(self._requests)
+        self._requests = {
+            client_id: timestamps
+            for client_id, timestamps in self._requests.items()
+            if any(ts > window_start for ts in timestamps)
+        }
+        after_count = len(self._requests)
+        if before_count != after_count:
+            logger.info(
+                "rate_limiter_cleanup",
+                clients_removed=before_count - after_count,
+                clients_remaining=after_count
+            )
 
     async def get_remaining(self, client_id: str) -> int:
         """

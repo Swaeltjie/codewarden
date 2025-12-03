@@ -129,60 +129,67 @@ class AzureDevOpsClient:
     async def _get_session(self) -> aiohttp.ClientSession:
         """
         Lazy-initialized HTTP session with authentication.
+
         Thread-safe session initialization with asyncio.Lock.
+        v2.6.2: Fixed race condition - all session operations now under lock.
         """
-        # Fast path: session already initialized
-        if self._session is not None and not self._session.closed:
-            # Get fresh token and update headers (tokens expire after ~1 hour)
-            try:
-                auth_header = await self._get_auth_token()
-                self._session.headers.update({"Authorization": auth_header})
-                return self._session
-            except Exception:
-                # If token refresh fails, need to reinitialize under lock
-                # Don't close here - will be handled in the lock section
-                pass
-
-        if self._session is None or self._session.closed:
-            # Slow path: need to initialize session
-            async with self._session_lock:
-                # Double-check after acquiring lock
-                if self._session is None or self._session.closed:
-                    # Clean up old session if it exists and is closed
-                    if self._session is not None and self._session.closed:
-                        try:
-                            await self._session.close()
-                        except Exception:
-                            pass  # Already closed
-                        self._session = None
-
+        async with self._session_lock:
+            # Check if session already initialized and valid
+            if self._session is not None and not self._session.closed:
+                # Get fresh token and update headers (tokens expire after ~1 hour)
+                try:
                     auth_header = await self._get_auth_token()
-
-                    # Connection pool tuning for production workloads
-                    # Settings configured via centralized constants
-                    connector = aiohttp.TCPConnector(
-                        limit=HTTP_CONNECTION_POOL_SIZE,
-                        limit_per_host=HTTP_CONNECTION_LIMIT_PER_HOST,
-                        ttl_dns_cache=DNS_CACHE_TTL_SECONDS,
-                        enable_cleanup_closed=True
+                    self._session.headers.update({"Authorization": auth_header})
+                    return self._session
+                except Exception as e:
+                    # v2.6.2: Token refresh failed - close session and reinitialize
+                    logger.warning(
+                        "token_refresh_failed_reinitializing",
+                        error=str(e)
                     )
+                    try:
+                        await self._session.close()
+                    except Exception:
+                        pass
+                    self._session = None
 
-                    self._session = aiohttp.ClientSession(
-                        connector=connector,
-                        headers={
-                            "Authorization": auth_header,
-                            "Content-Type": "application/json",
-                            "Accept": "application/json"
-                        },
-                        timeout=aiohttp.ClientTimeout(total=AZURE_DEVOPS_TIMEOUT)
-                    )
+            # Session needs initialization or reinitializtion
+            if self._session is None or self._session.closed:
+                # Clean up old session if it exists and is closed
+                if self._session is not None and self._session.closed:
+                    try:
+                        await self._session.close()
+                    except Exception:
+                        pass  # Already closed
+                    self._session = None
 
-                    logger.info(
-                        "devops_session_created",
-                        auth_method="managed_identity"
-                    )
+                auth_header = await self._get_auth_token()
 
-        return self._session
+                # Connection pool tuning for production workloads
+                # Settings configured via centralized constants
+                connector = aiohttp.TCPConnector(
+                    limit=HTTP_CONNECTION_POOL_SIZE,
+                    limit_per_host=HTTP_CONNECTION_LIMIT_PER_HOST,
+                    ttl_dns_cache=DNS_CACHE_TTL_SECONDS,
+                    enable_cleanup_closed=True
+                )
+
+                self._session = aiohttp.ClientSession(
+                    connector=connector,
+                    headers={
+                        "Authorization": auth_header,
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    },
+                    timeout=aiohttp.ClientTimeout(total=AZURE_DEVOPS_TIMEOUT)
+                )
+
+                logger.info(
+                    "devops_session_created",
+                    auth_method="managed_identity"
+                )
+
+            return self._session
 
     # REMOVED in v2.5.0: Deprecated sync `session` property
     # All callers should use `await _get_session()` instead

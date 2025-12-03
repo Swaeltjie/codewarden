@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.5.14 - Aggregation overflow protection
+Version: 2.6.2 - Reliability improvements
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -399,26 +399,46 @@ class ReviewResult(BaseModel):
         total_tokens = 0
         total_cost = 0.0
 
+        # v2.6.2: Added per-result exception handling for resilience
         for result in valid_results:
-            all_issues.extend(result.issues)
-            total_tokens += result.tokens_used
-            total_cost += result.estimated_cost
+            try:
+                # Validate result has required attributes
+                if not hasattr(result, 'issues') or result.issues is None:
+                    _logger.warning("aggregate_result_missing_issues")
+                    continue
+                if not hasattr(result, 'tokens_used'):
+                    _logger.warning("aggregate_result_missing_tokens")
+                    result.tokens_used = 0
+                if not hasattr(result, 'estimated_cost'):
+                    result.estimated_cost = 0.0
 
-            # Cap at Pydantic field limits to prevent validation errors
-            if total_tokens >= MAX_TOKENS:
+                all_issues.extend(result.issues)
+                total_tokens += result.tokens_used
+                total_cost += result.estimated_cost
+
+                # Cap at Pydantic field limits to prevent validation errors
+                if total_tokens >= MAX_TOKENS:
+                    _logger.warning(
+                        "aggregate_token_overflow",
+                        total=total_tokens,
+                        capped_at=MAX_TOKENS
+                    )
+                    total_tokens = MAX_TOKENS
+                if total_cost >= MAX_COST:
+                    _logger.warning(
+                        "aggregate_cost_overflow",
+                        total=total_cost,
+                        capped_at=MAX_COST
+                    )
+                    total_cost = MAX_COST
+            except Exception as e:
+                # v2.6.2: Don't let one bad result break entire aggregation
                 _logger.warning(
-                    "aggregate_token_overflow",
-                    total=total_tokens,
-                    capped_at=MAX_TOKENS
+                    "aggregate_result_processing_failed",
+                    error=str(e),
+                    error_type=type(e).__name__
                 )
-                total_tokens = MAX_TOKENS
-            if total_cost >= MAX_COST:
-                _logger.warning(
-                    "aggregate_cost_overflow",
-                    total=total_cost,
-                    capped_at=MAX_COST
-                )
-                total_cost = MAX_COST
+                continue
 
         # Determine overall recommendation
         # Priority: critical issues -> high issues -> any issues -> approve

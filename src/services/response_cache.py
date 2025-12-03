@@ -4,8 +4,9 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.5.14 - Race condition fixes
+Version: 2.6.2 - Added timeout and non-blocking table operations
 """
+import asyncio
 import json
 import threading
 from typing import Optional, Dict, Any
@@ -359,7 +360,8 @@ class ResponseCache:
                 )
                 return
 
-            ensure_table_exists(self.table_name)
+            # v2.6.2: Run blocking table operations in thread pool
+            await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
 
             # Create cache entity
@@ -375,8 +377,22 @@ class ResponseCache:
                 ttl_days=self.ttl_days
             )
 
-            # Store in cache
-            table_client.upsert_entity(cache_entity.to_table_entity())
+            # v2.6.2: Store with timeout to prevent hanging on slow storage
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        table_client.upsert_entity,
+                        cache_entity.to_table_entity()
+                    ),
+                    timeout=5.0  # 5 second timeout for cache writes
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "cache_write_timeout",
+                    repository=repository,
+                    file_path=file_path
+                )
+                return  # Don't fail the review if caching times out
 
             logger.info(
                 "review_cached",
