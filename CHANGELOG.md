@@ -5,6 +5,49 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2025-12-03
+
+### Changed - Focused File Categories
+
+**Removed File Categories** (per user requirements)
+- Removed: Rust, Kotlin, Scala, Bicep, Pulumi
+- Removed: GitHub Actions, Jenkins, Dependabot
+- Removed: Cargo (Rust package management)
+
+**Added .NET Support**
+- Added VB.NET support (`.vb`, `.vbs` files) with best practices
+- Enhanced NuGet/project file support (`.csproj`, `.vbproj`, `.fsproj`, `.sln`, `.props`, `.targets`)
+- Added support for `nuget.config`, `packages.config`, `Directory.Build.props/targets`
+
+### Fixed - Security & Reliability (from code review)
+
+**Critical: Race Condition in FileTypeRegistry Initialization**
+- Added `threading.Lock` for thread-safe initialization
+- Implemented double-check locking pattern to prevent race conditions
+- Location: `src/services/file_type_registry.py:295-336`
+
+**Critical: ReDoS Vulnerability in Path Pattern Matching**
+- Added `MAX_PATH_LENGTH = 2000` limit to prevent regex denial of service
+- Added null byte detection in file paths
+- Added try/except around regex matching with error logging
+- Location: `src/services/file_type_registry.py:2587-2651`
+
+**High: Integer Overflow in Token Estimation**
+- Added `MAX_LINES_PER_FILE = 100,000` limit
+- Added `MAX_TOKENS_PER_FILE = 1,000,000` cap
+- Added warning logging for excessive line counts
+- Location: `src/services/context_manager.py:87-136`
+
+### Updated Files
+| File | Changes |
+|------|---------|
+| `src/services/file_type_registry.py` | Removed categories, added VB.NET, thread safety, ReDoS protection |
+| `src/services/context_manager.py` | Added bounds checking for token estimation |
+| `src/utils/config.py` | Version 2.6.1 |
+| `CHANGELOG.md` | This release |
+
+---
+
 ## [2.6.0] - 2025-12-03
 
 ### Added - Universal Code Review with Best Practices

@@ -5,12 +5,13 @@ File Type Registry
 Comprehensive registry of file types with intelligent detection and best practices.
 Transforms CodeWarden from IaC-specific to universal code review.
 
-Version: 2.6.0 - Universal code review
+Version: 2.6.1 - Bug fixes and .NET support
 """
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 import re
+import threading
 from functools import lru_cache
 
 from src.utils.logging import get_logger
@@ -33,15 +34,13 @@ class FileCategory(str, Enum):
     TYPESCRIPT = "typescript"
     JAVA = "java"
     CSHARP = "csharp"
+    VBNET = "vbnet"
     GO = "go"
-    RUST = "rust"
     CPP = "cpp"
     C = "c"
     RUBY = "ruby"
     PHP = "php"
     SWIFT = "swift"
-    KOTLIN = "kotlin"
-    SCALA = "scala"
     LUA = "lua"
     PERL = "perl"
     R = "r"
@@ -68,8 +67,6 @@ class FileCategory(str, Enum):
     KUBERNETES = "kubernetes"
     DOCKER = "docker"
     HELM = "helm"
-    BICEP = "bicep"
-    PULUMI = "pulumi"
     ARM_TEMPLATE = "arm_template"
     SERVERLESS = "serverless"
     CDK = "cdk"
@@ -80,9 +77,7 @@ class FileCategory(str, Enum):
     # CI/CD PIPELINES
     # ==========================================================================
     AZURE_PIPELINE = "azure_pipeline"
-    GITHUB_ACTIONS = "github_actions"
     GITLAB_CI = "gitlab_ci"
-    JENKINS = "jenkins"
     CIRCLECI = "circleci"
     TRAVIS_CI = "travis_ci"
     BITBUCKET_PIPELINE = "bitbucket_pipeline"
@@ -167,7 +162,6 @@ class FileCategory(str, Enum):
     NPM_PACKAGE = "npm_package"
     REQUIREMENTS = "requirements"
     GEMFILE = "gemfile"
-    CARGO = "cargo"
     COMPOSER = "composer"
     PUBSPEC = "pubspec"
     PODFILE = "podfile"
@@ -200,7 +194,6 @@ class FileCategory(str, Enum):
     ESLINT = "eslint"
     PRETTIER = "prettier"
     RENOVATE = "renovate"
-    DEPENDABOT = "dependabot"
 
     # ==========================================================================
     # GENERIC (Fallback - still reviewed!)
@@ -288,6 +281,7 @@ class FileTypeRegistry:
     - Best practices lookup for each category
     - Token estimation for cost calculation
     - Caching for performance
+    - Thread-safe initialization (v2.6.1)
 
     Usage:
         category = FileTypeRegistry.classify("src/main.py")
@@ -298,36 +292,48 @@ class FileTypeRegistry:
     _configs: Dict[FileCategory, FileTypeConfig] = {}
     _extension_map: Dict[str, List[Tuple[FileTypeConfig, int]]] = {}  # ext -> [(config, priority)]
     _initialized: bool = False
+    _init_lock: threading.Lock = threading.Lock()  # Thread-safe initialization (v2.6.1)
 
     @classmethod
     def _initialize(cls) -> None:
-        """Initialize the registry with all file type configurations."""
+        """
+        Initialize the registry with all file type configurations.
+
+        Thread-safe using double-check locking pattern (v2.6.1).
+        """
+        # Fast path - already initialized
         if cls._initialized:
             return
 
-        cls._register_programming_languages()
-        cls._register_infrastructure_as_code()
-        cls._register_cicd_pipelines()
-        cls._register_configuration_files()
-        cls._register_web_development()
-        cls._register_data_and_query()
-        cls._register_shell_and_scripts()
-        cls._register_documentation()
-        cls._register_build_systems()
-        cls._register_package_management()
-        cls._register_testing()
-        cls._register_security_and_compliance()
-        cls._register_generic()
+        # Thread-safe initialization with double-check locking
+        with cls._init_lock:
+            # Check again inside lock (another thread may have initialized)
+            if cls._initialized:
+                return
 
-        # Build extension map with priorities
-        cls._build_extension_map()
-        cls._initialized = True
+            cls._register_programming_languages()
+            cls._register_infrastructure_as_code()
+            cls._register_cicd_pipelines()
+            cls._register_configuration_files()
+            cls._register_web_development()
+            cls._register_data_and_query()
+            cls._register_shell_and_scripts()
+            cls._register_documentation()
+            cls._register_build_systems()
+            cls._register_package_management()
+            cls._register_testing()
+            cls._register_security_and_compliance()
+            cls._register_generic()
 
-        logger.info(
-            "file_type_registry_initialized",
-            categories=len(cls._configs),
-            extensions=len(cls._extension_map)
-        )
+            # Build extension map with priorities
+            cls._build_extension_map()
+            cls._initialized = True
+
+            logger.info(
+                "file_type_registry_initialized",
+                categories=len(cls._configs),
+                extensions=len(cls._extension_map)
+            )
 
     @classmethod
     def _register(cls, config: FileTypeConfig) -> None:
@@ -584,6 +590,50 @@ class FileTypeRegistry:
             )
         ))
 
+        # VB.NET
+        cls._register(FileTypeConfig(
+            category=FileCategory.VBNET,
+            extensions=[".vb", ".vbs"],
+            token_estimate=400,
+            priority=10,
+            best_practices=BestPractices(
+                focus_areas=[
+                    "Async/await patterns",
+                    "Option Strict/Explicit",
+                    "LINQ usage",
+                    "Modern VB syntax"
+                ],
+                security_checks=[
+                    "SQL injection (parameterized queries)",
+                    "XSS in ASP.NET applications",
+                    "Deserialization vulnerabilities",
+                    "Path traversal",
+                    "Hardcoded secrets",
+                    "Insecure cryptography"
+                ],
+                common_issues=[
+                    "Late binding issues",
+                    "Missing Option Strict",
+                    "Null reference exceptions",
+                    "IDisposable not disposed",
+                    "Legacy VB6 patterns",
+                    "On Error Resume Next abuse"
+                ],
+                style_guidelines=[
+                    "Microsoft naming conventions",
+                    "XML documentation comments",
+                    "Option Strict On",
+                    "Consistent casing"
+                ],
+                performance_tips=[
+                    "Avoid late binding",
+                    "Use StringBuilder for concatenation",
+                    "Proper exception handling",
+                    "ConfigureAwait(false) in libraries"
+                ]
+            )
+        ))
+
         # Go
         cls._register(FileTypeConfig(
             category=FileCategory.GO,
@@ -627,51 +677,6 @@ class FileTypeRegistry:
                     "Avoid string concatenation in loops",
                     "Pre-allocate slice capacity",
                     "Buffered channels where appropriate"
-                ]
-            )
-        ))
-
-        # Rust
-        cls._register(FileTypeConfig(
-            category=FileCategory.RUST,
-            extensions=[".rs"],
-            token_estimate=400,
-            priority=10,
-            best_practices=BestPractices(
-                focus_areas=[
-                    "Ownership and borrowing",
-                    "Error handling (Result/Option)",
-                    "Unsafe code review",
-                    "Lifetime annotations"
-                ],
-                security_checks=[
-                    "Unsafe block usage",
-                    "Memory safety in FFI",
-                    "Panics in library code",
-                    "Integer overflow",
-                    "Unchecked indexing",
-                    "Data races (even with unsafe)",
-                    "SQL injection (diesel, sqlx)"
-                ],
-                common_issues=[
-                    "Unnecessary cloning",
-                    "Overuse of unwrap()",
-                    "Lifetime issues",
-                    "Missing error propagation",
-                    "Inefficient borrowing patterns",
-                    "Blocking in async code"
-                ],
-                style_guidelines=[
-                    "Clippy lint compliance",
-                    "Rustfmt formatting",
-                    "Documentation comments",
-                    "Idiomatic Rust patterns"
-                ],
-                performance_tips=[
-                    "Avoid unnecessary allocations",
-                    "Use iterators over loops",
-                    "Appropriate use of Box/Rc/Arc",
-                    "Consider zero-copy parsing"
                 ]
             )
         ))
@@ -900,92 +905,6 @@ class FileTypeRegistry:
                     "Lazy initialization",
                     "Avoid unnecessary copies",
                     "Efficient collection usage"
-                ]
-            )
-        ))
-
-        # Kotlin
-        cls._register(FileTypeConfig(
-            category=FileCategory.KOTLIN,
-            extensions=[".kt", ".kts"],
-            token_estimate=400,
-            priority=10,
-            best_practices=BestPractices(
-                focus_areas=[
-                    "Null safety",
-                    "Coroutines",
-                    "Extension functions",
-                    "Data classes"
-                ],
-                security_checks=[
-                    "SQL injection",
-                    "Insecure deserialization",
-                    "Hardcoded credentials",
-                    "Insecure random",
-                    "Path traversal",
-                    "Intent injection (Android)"
-                ],
-                common_issues=[
-                    "Excessive use of !!",
-                    "Coroutine cancellation issues",
-                    "Memory leaks in Android",
-                    "Improper scope functions",
-                    "Threading issues",
-                    "Lazy initialization race"
-                ],
-                style_guidelines=[
-                    "Kotlin coding conventions",
-                    "KDoc documentation",
-                    "Idiomatic Kotlin",
-                    "Consistent naming"
-                ],
-                performance_tips=[
-                    "Inline functions for lambdas",
-                    "Sequence for large collections",
-                    "Avoid unnecessary boxing",
-                    "Coroutine dispatcher selection"
-                ]
-            )
-        ))
-
-        # Scala
-        cls._register(FileTypeConfig(
-            category=FileCategory.SCALA,
-            extensions=[".scala", ".sc"],
-            token_estimate=450,
-            priority=10,
-            best_practices=BestPractices(
-                focus_areas=[
-                    "Functional programming patterns",
-                    "Type system usage",
-                    "Concurrency (Futures, Akka)",
-                    "Implicits/given"
-                ],
-                security_checks=[
-                    "SQL injection",
-                    "Command injection",
-                    "Deserialization vulnerabilities",
-                    "Path traversal",
-                    "Hardcoded secrets"
-                ],
-                common_issues=[
-                    "Implicit abuse",
-                    "Pattern matching exhaustiveness",
-                    "Blocking in Futures",
-                    "Memory issues",
-                    "Type inference problems"
-                ],
-                style_guidelines=[
-                    "Scala style guide",
-                    "ScalaDoc comments",
-                    "Consistent formatting",
-                    "Proper imports"
-                ],
-                performance_tips=[
-                    "Avoid excessive allocations",
-                    "Use lazy evaluation",
-                    "Parallel collections",
-                    "Tail recursion"
                 ]
             )
         ))
@@ -1264,48 +1183,6 @@ class FileTypeRegistry:
             )
         ))
 
-        # Bicep (Azure)
-        cls._register(FileTypeConfig(
-            category=FileCategory.BICEP,
-            extensions=[".bicep"],
-            token_estimate=350,
-            priority=10,
-            best_practices=BestPractices(
-                focus_areas=[
-                    "Module organization",
-                    "Parameter validation",
-                    "Resource dependencies",
-                    "Output definitions"
-                ],
-                security_checks=[
-                    "Public endpoints",
-                    "Missing encryption",
-                    "Overly permissive RBAC",
-                    "Hardcoded secrets",
-                    "Missing diagnostic settings",
-                    "Network security rules"
-                ],
-                common_issues=[
-                    "Missing required tags",
-                    "Hardcoded values",
-                    "Missing dependencies",
-                    "Incorrect API versions",
-                    "Missing parameter descriptions"
-                ],
-                style_guidelines=[
-                    "Consistent naming",
-                    "Parameter decorators",
-                    "Module structure",
-                    "Comments and documentation"
-                ],
-                performance_tips=[
-                    "Module versioning",
-                    "Resource grouping",
-                    "Deployment modes"
-                ]
-            )
-        ))
-
         # CloudFormation
         cls._register(FileTypeConfig(
             category=FileCategory.CLOUDFORMATION,
@@ -1357,54 +1234,6 @@ class FileTypeRegistry:
     @classmethod
     def _register_cicd_pipelines(cls) -> None:
         """Register CI/CD pipeline configurations."""
-
-        # GitHub Actions
-        cls._register(FileTypeConfig(
-            category=FileCategory.GITHUB_ACTIONS,
-            extensions=[],
-            path_patterns=[
-                r".*\.github/workflows/.*\.ya?ml$",
-                r".*\.github/actions/.*\.ya?ml$",
-            ],
-            token_estimate=350,
-            priority=110,  # Highest priority for YAML files
-            best_practices=BestPractices(
-                focus_areas=[
-                    "Workflow organization",
-                    "Secret management",
-                    "Caching strategies",
-                    "Matrix builds"
-                ],
-                security_checks=[
-                    "Secrets logged to console",
-                    "Untrusted input in run commands",
-                    "Missing environment protection",
-                    "Overly permissive GITHUB_TOKEN",
-                    "Pull request target trigger abuse",
-                    "Third-party actions without SHA pinning",
-                    "Script injection via user input"
-                ],
-                common_issues=[
-                    "Missing timeout-minutes",
-                    "Missing continue-on-error handling",
-                    "Redundant checkout steps",
-                    "Missing concurrency groups",
-                    "Inefficient caching"
-                ],
-                style_guidelines=[
-                    "Descriptive job names",
-                    "Consistent indentation",
-                    "Reusable workflows",
-                    "Clear step names"
-                ],
-                performance_tips=[
-                    "Dependency caching",
-                    "Matrix strategy optimization",
-                    "Conditional job execution",
-                    "Artifact retention policies"
-                ]
-            )
-        ))
 
         # GitLab CI
         cls._register(FileTypeConfig(
@@ -1497,52 +1326,6 @@ class FileTypeRegistry:
                     "Parallel jobs",
                     "Incremental builds",
                     "Container jobs"
-                ]
-            )
-        ))
-
-        # Jenkins
-        cls._register(FileTypeConfig(
-            category=FileCategory.JENKINS,
-            extensions=["Jenkinsfile"],
-            path_patterns=[
-                r".*[Jj]enkinsfile.*",
-                r".*\.jenkins$",
-            ],
-            token_estimate=400,
-            priority=100,
-            best_practices=BestPractices(
-                focus_areas=[
-                    "Pipeline structure",
-                    "Shared libraries",
-                    "Agent selection",
-                    "Parallel execution"
-                ],
-                security_checks=[
-                    "Credential exposure",
-                    "Script approval security",
-                    "Sandbox restrictions",
-                    "Agent security",
-                    "Input validation"
-                ],
-                common_issues=[
-                    "Blocking I/O on master",
-                    "Missing timeouts",
-                    "Improper error handling",
-                    "Resource cleanup",
-                    "Serial execution bottlenecks"
-                ],
-                style_guidelines=[
-                    "Declarative vs scripted",
-                    "Stage organization",
-                    "Function naming",
-                    "Documentation"
-                ],
-                performance_tips=[
-                    "Parallel stages",
-                    "Agent optimization",
-                    "Workspace cleanup",
-                    "Caching"
                 ]
             )
         ))
@@ -2507,38 +2290,52 @@ class FileTypeRegistry:
             )
         ))
 
-        # Cargo (Rust)
+        # NuGet / .NET Project Files
         cls._register(FileTypeConfig(
-            category=FileCategory.CARGO,
-            extensions=[],
-            path_patterns=[r".*Cargo\.toml$", r".*Cargo\.lock$"],
-            token_estimate=250,
+            category=FileCategory.NUGET,
+            extensions=[".csproj", ".vbproj", ".fsproj", ".sln", ".props", ".targets"],
+            path_patterns=[
+                r".*\.csproj$",
+                r".*\.vbproj$",
+                r".*\.fsproj$",
+                r".*\.sln$",
+                r".*nuget\.config$",
+                r".*packages\.config$",
+                r".*Directory\.Build\.props$",
+                r".*Directory\.Build\.targets$",
+            ],
+            token_estimate=300,
             priority=100,
             best_practices=BestPractices(
                 focus_areas=[
-                    "Dependency specification",
-                    "Feature flags",
-                    "Workspace organization"
+                    "Package versioning",
+                    "Project SDK usage",
+                    "Central package management",
+                    "Build configuration"
                 ],
                 security_checks=[
-                    "Vulnerable crates",
-                    "Unsafe features",
-                    "Build script security"
+                    "Vulnerable NuGet packages",
+                    "Untrusted package sources",
+                    "Package signature verification",
+                    "Hardcoded credentials in nuget.config"
                 ],
                 common_issues=[
-                    "Feature flag explosion",
-                    "Version conflicts",
-                    "Missing Cargo.lock",
-                    "Unnecessary features"
+                    "Floating package versions",
+                    "Deprecated packages",
+                    "Package version conflicts",
+                    "Missing package restore",
+                    "Inconsistent target frameworks"
                 ],
                 style_guidelines=[
-                    "Sorted dependencies",
-                    "Feature organization",
-                    "Metadata completeness"
+                    "SDK-style project format",
+                    "Central package management",
+                    "Consistent property groups",
+                    "Explicit package versions"
                 ],
                 performance_tips=[
-                    "Minimal features",
-                    "Workspace deduplication"
+                    "Enable package caching",
+                    "Use package lock files",
+                    "Optimize restore performance"
                 ]
             )
         ))
@@ -2787,6 +2584,9 @@ class FileTypeRegistry:
     # PUBLIC API
     # ==========================================================================
 
+    # Maximum path length to prevent ReDoS attacks (v2.6.1)
+    MAX_PATH_LENGTH: int = 2000
+
     @classmethod
     @lru_cache(maxsize=1000)
     def classify(cls, file_path: str) -> FileCategory:
@@ -2803,10 +2603,28 @@ class FileTypeRegistry:
 
         Returns:
             FileCategory for the file
+
+        Note:
+            v2.6.1: Added path length validation to prevent ReDoS attacks.
         """
         cls._initialize()
 
-        if not file_path:
+        # Defensive validation (v2.6.1)
+        if not file_path or not isinstance(file_path, str):
+            return FileCategory.GENERIC
+
+        # Prevent ReDoS attacks with excessively long paths (v2.6.1)
+        if len(file_path) > cls.MAX_PATH_LENGTH:
+            logger.warning(
+                "path_too_long_for_classification",
+                path_length=len(file_path),
+                max_length=cls.MAX_PATH_LENGTH
+            )
+            return FileCategory.GENERIC
+
+        # Check for null bytes (security) (v2.6.1)
+        if '\x00' in file_path:
+            logger.warning("null_byte_in_path", path=file_path[:50])
             return FileCategory.GENERIC
 
         path_lower = file_path.lower()
@@ -2814,14 +2632,23 @@ class FileTypeRegistry:
         # First, try path pattern matching (highest priority for context)
         for config in sorted(cls._configs.values(), key=lambda c: c.priority, reverse=True):
             for pattern in config.path_patterns:
-                if re.match(pattern, path_lower):
-                    logger.debug(
-                        "file_classified_by_pattern",
-                        path=file_path[:100],
-                        category=config.category.value,
-                        pattern=pattern[:50]
+                try:
+                    if re.match(pattern, path_lower):
+                        logger.debug(
+                            "file_classified_by_pattern",
+                            path=file_path[:100],
+                            category=config.category.value,
+                            pattern=pattern[:50]
+                        )
+                        return config.category
+                except re.error as e:
+                    # Log and skip invalid patterns (v2.6.1)
+                    logger.warning(
+                        "invalid_regex_pattern",
+                        pattern=pattern[:50],
+                        error=str(e)
                     )
-                    return config.category
+                    continue
 
         # Second, try extension mapping
         # Get file extension (handle files like "Dockerfile", "Makefile")

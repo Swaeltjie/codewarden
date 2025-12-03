@@ -4,7 +4,7 @@ Context Manager for Review Strategy Selection
 
 Determines which review strategy to use based on PR size and complexity.
 
-Version: 2.6.0 - Universal code review with registry-based token estimates
+Version: 2.6.1 - Added bounds checking for token estimation
 """
 from enum import Enum
 from typing import Dict, List
@@ -84,18 +84,23 @@ class ContextManager:
         
         return strategy
     
+    # v2.6.1: Bounds for token estimation to prevent integer overflow
+    MAX_LINES_PER_FILE: int = 100_000
+    MAX_TOKENS_PER_FILE: int = 1_000_000
+
     def _estimate_file_tokens(self, file: FileChange) -> int:
         """
         Estimate token count for a file.
 
         v2.6.0: Uses FileTypeRegistry for category-specific base estimates,
         then adjusts based on actual changed sections.
+        v2.6.1: Added bounds checking to prevent integer overflow.
 
         Args:
             file: FileChange object
 
         Returns:
-            Estimated token count
+            Estimated token count (capped at MAX_TOKENS_PER_FILE)
         """
         # Get base estimate from registry based on file category
         base_estimate = FileTypeRegistry.get_token_estimate(file.file_type)
@@ -109,14 +114,25 @@ class ContextManager:
                 len(section.context_after)
                 for section in file.changed_sections
             )
-            # Estimate: ~6 tokens per line
-            line_based_estimate = total_lines * 6
+
+            # v2.6.1: Apply bounds checking to prevent overflow
+            if total_lines > self.MAX_LINES_PER_FILE:
+                logger.warning(
+                    "excessive_line_count",
+                    total_lines=total_lines,
+                    max_lines=self.MAX_LINES_PER_FILE,
+                    file_path=file.path[:100]
+                )
+                total_lines = self.MAX_LINES_PER_FILE
+
+            # Estimate: ~6 tokens per line (capped)
+            line_based_estimate = min(total_lines * 6, self.MAX_TOKENS_PER_FILE)
 
             # Use the larger of base estimate or line-based estimate
             return max(base_estimate, line_based_estimate)
 
-        # Fallback: use total changes or base estimate
-        changes_estimate = max(0, file.total_changes * 6)
+        # Fallback: use total changes or base estimate (with bounds)
+        changes_estimate = min(max(0, file.total_changes * 6), self.MAX_TOKENS_PER_FILE)
         return max(base_estimate, changes_estimate)
     
     def group_related_files(self, files: List[FileChange]) -> List[List[FileChange]]:

@@ -4,7 +4,7 @@ Configuration Management
 
 Handles application settings and Azure Key Vault integration for secrets.
 
-Version: 2.6.0 - Universal code review with FileTypeRegistry
+Version: 2.6.1 - Bug fixes and .NET support
 """
 from pydantic_settings import BaseSettings
 from azure.identity import DefaultAzureCredential
@@ -22,7 +22,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Application version - single source of truth
-__version__ = "2.6.0"
+__version__ = "2.6.1"
 
 
 class Settings(BaseSettings):
