@@ -5,12 +5,13 @@ Git Diff Parser with Diff-Only Analysis
 Parses git diffs to extract only changed sections, dramatically reducing
 token usage and improving review focus.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.6.5 - Use centralized constants
 """
 from typing import List, Optional
 from dataclasses import dataclass
 import unidiff
 
+from src.utils.constants import MAX_HUNK_LINES
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -168,7 +169,6 @@ class DiffParser:
         lines_after_change = 0
 
         # Safety limit: prevent processing extremely large hunks (DoS protection)
-        MAX_HUNK_LINES = 10000
         line_count = 0
 
         for line in hunk:

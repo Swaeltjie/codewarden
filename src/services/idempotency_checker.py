@@ -4,7 +4,7 @@ Idempotency Checker
 
 Prevents duplicate PR review processing when webhooks are retried.
 
-Version: 2.6.3 - Non-blocking table operations
+Version: 2.6.5 - Use centralized constants
 """
 import asyncio
 from typing import Optional, Dict
@@ -17,7 +17,7 @@ from src.utils.table_storage import (
     query_entities_paginated
 )
 from src.utils.config import get_settings
-from src.utils.constants import TABLE_STORAGE_BATCH_SIZE
+from src.utils.constants import TABLE_STORAGE_BATCH_SIZE, MAX_IDEMPOTENCY_ENTRIES
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -303,12 +303,11 @@ class IdempotencyChecker:
             duplicate_requests = 0
 
             # v2.6.3: Run blocking pagination in thread pool with safety limit
-            MAX_ENTRIES = 10000
             entities = await asyncio.to_thread(
                 lambda: list(
                     entity for i, entity in enumerate(
                         query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE)
-                    ) if i < MAX_ENTRIES
+                    ) if i < MAX_IDEMPOTENCY_ENTRIES
                 )
             )
 

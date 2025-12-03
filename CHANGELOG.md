@@ -5,6 +5,41 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.5] - 2025-12-03
+
+### Changed - Consolidated Constants
+
+All magic numbers and configuration values are now centralized in `src/utils/constants.py`.
+
+**New Constants Added:**
+- `MAX_LINES_PER_FILE` - Maximum lines per file for token estimation (100,000)
+- `MAX_TOKENS_PER_FILE` - Maximum tokens per file cap (1,000,000)
+- `STRATEGY_SMALL_FILE_LIMIT` - Max files for single-pass review (5)
+- `STRATEGY_SMALL_TOKEN_LIMIT` - Max tokens for single-pass review (10,000)
+- `STRATEGY_MEDIUM_FILE_LIMIT` - Max files for chunked review (15)
+- `STRATEGY_MEDIUM_TOKEN_LIMIT` - Max tokens for chunked review (40,000)
+- `TOKENS_PER_LINE_ESTIMATE` - Token estimation multiplier (6)
+- `MAX_HUNK_LINES` - Maximum lines in a diff hunk (10,000)
+- `MAX_LOGGED_ISSUE_ERRORS` - Max issue errors to log individually (10)
+- `MAX_AGGREGATED_TOKENS` - Pydantic field limit for tokens (9,999,999)
+- `MAX_AGGREGATED_COST` - Pydantic field limit for cost (9,999.99)
+- `MAX_IDEMPOTENCY_ENTRIES` - Max entries in idempotency stats query (10,000)
+- `MAX_PATTERN_REVIEWS` - Max reviews in pattern detection query (10,000)
+
+### Updated Files
+| File | Changes |
+|------|---------|
+| `src/utils/constants.py` | Added 13 new constants |
+| `src/services/context_manager.py` | Use centralized strategy constants |
+| `src/services/diff_parser.py` | Use `MAX_HUNK_LINES` |
+| `src/models/review_result.py` | Use centralized error/limit constants |
+| `src/services/idempotency_checker.py` | Use `MAX_IDEMPOTENCY_ENTRIES` |
+| `src/services/pattern_detector.py` | Use `MAX_PATTERN_REVIEWS` |
+| `src/utils/config.py` | Version 2.6.5 |
+| `CHANGELOG.md` | This release |
+
+---
+
 ## [2.6.4] - 2025-12-03
 
 ### Fixed - Bug Fixes

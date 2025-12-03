@@ -4,13 +4,22 @@ Context Manager for Review Strategy Selection
 
 Determines which review strategy to use based on PR size and complexity.
 
-Version: 2.6.1 - Added bounds checking for token estimation
+Version: 2.6.5 - Use centralized constants
 """
 from enum import Enum
 from typing import Dict, List
 
 from src.models.pr_event import FileChange, FileType
 from src.services.file_type_registry import FileTypeRegistry, FileCategory
+from src.utils.constants import (
+    MAX_LINES_PER_FILE,
+    MAX_TOKENS_PER_FILE,
+    STRATEGY_SMALL_FILE_LIMIT,
+    STRATEGY_SMALL_TOKEN_LIMIT,
+    STRATEGY_MEDIUM_FILE_LIMIT,
+    STRATEGY_MEDIUM_TOKEN_LIMIT,
+    TOKENS_PER_LINE_ESTIMATE,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -66,10 +75,10 @@ class ContextManager:
         
         # Simple heuristics for MVP
         # Small PRs: review everything in one AI call
-        if file_count <= 5 and estimated_tokens <= 10_000:
+        if file_count <= STRATEGY_SMALL_FILE_LIMIT and estimated_tokens <= STRATEGY_SMALL_TOKEN_LIMIT:
             strategy = ReviewStrategy.SINGLE_PASS
         # Medium PRs: group related files and review each group
-        elif file_count <= 15 and estimated_tokens <= 40_000:
+        elif file_count <= STRATEGY_MEDIUM_FILE_LIMIT and estimated_tokens <= STRATEGY_MEDIUM_TOKEN_LIMIT:
             strategy = ReviewStrategy.CHUNKED
         # Large PRs: review each file individually, then cross-file analysis
         else:
@@ -84,10 +93,6 @@ class ContextManager:
         
         return strategy
     
-    # v2.6.1: Bounds for token estimation to prevent integer overflow
-    MAX_LINES_PER_FILE: int = 100_000
-    MAX_TOKENS_PER_FILE: int = 1_000_000
-
     def _estimate_file_tokens(self, file: FileChange) -> int:
         """
         Estimate token count for a file.
@@ -116,23 +121,23 @@ class ContextManager:
             )
 
             # v2.6.1: Apply bounds checking to prevent overflow
-            if total_lines > self.MAX_LINES_PER_FILE:
+            if total_lines > MAX_LINES_PER_FILE:
                 logger.warning(
                     "excessive_line_count",
                     total_lines=total_lines,
-                    max_lines=self.MAX_LINES_PER_FILE,
+                    max_lines=MAX_LINES_PER_FILE,
                     file_path=file.path[:100]
                 )
-                total_lines = self.MAX_LINES_PER_FILE
+                total_lines = MAX_LINES_PER_FILE
 
             # Estimate: ~6 tokens per line (capped)
-            line_based_estimate = min(total_lines * 6, self.MAX_TOKENS_PER_FILE)
+            line_based_estimate = min(total_lines * TOKENS_PER_LINE_ESTIMATE, MAX_TOKENS_PER_FILE)
 
             # Use the larger of base estimate or line-based estimate
             return max(base_estimate, line_based_estimate)
 
         # Fallback: use total changes or base estimate (with bounds)
-        changes_estimate = min(max(0, file.total_changes * 6), self.MAX_TOKENS_PER_FILE)
+        changes_estimate = min(max(0, file.total_changes * TOKENS_PER_LINE_ESTIMATE), MAX_TOKENS_PER_FILE)
         return max(base_estimate, changes_estimate)
     
     def group_related_files(self, files: List[FileChange]) -> List[List[FileChange]]:

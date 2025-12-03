@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.6.4 - Bug fixes for type validation
+Version: 2.6.5 - Use centralized constants
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -14,7 +14,13 @@ import os
 from datetime import datetime, timezone
 
 # Import constants for validation
-from src.utils.constants import MAX_ISSUES_PER_REVIEW, MAX_COMMENT_LENGTH
+from src.utils.constants import (
+    MAX_ISSUES_PER_REVIEW,
+    MAX_COMMENT_LENGTH,
+    MAX_LOGGED_ISSUE_ERRORS,
+    MAX_AGGREGATED_TOKENS,
+    MAX_AGGREGATED_COST,
+)
 from src.utils.logging import get_logger
 
 # Module-level logger for use in classmethods/staticmethods
@@ -280,8 +286,6 @@ class ReviewResult(BaseModel):
         # Parse issues with better error handling
         issues = []
         invalid_count = 0
-        # Limit individual error logs to prevent log flooding (DoS protection)
-        MAX_LOGGED_ERRORS = 10
 
         # v2.6.4: Validate that issues is a list to prevent TypeError
         issues_data = ai_json.get('issues', [])
@@ -309,13 +313,13 @@ class ReviewResult(BaseModel):
                 # Only catch specific validation errors, not all exceptions
                 # Rate limit individual error logs to prevent DoS via log flooding
                 invalid_count += 1
-                if invalid_count <= MAX_LOGGED_ERRORS:
+                if invalid_count <= MAX_LOGGED_ISSUE_ERRORS:
                     _logger.warning(
                         "invalid_issue_format",
                         index=idx,
                         error=str(e)
                     )
-                elif invalid_count == MAX_LOGGED_ERRORS + 1:
+                elif invalid_count == MAX_LOGGED_ISSUE_ERRORS + 1:
                     _logger.warning(
                         "too_many_invalid_issues",
                         message="Suppressing further individual error logs"
@@ -403,8 +407,6 @@ class ReviewResult(BaseModel):
 
         # Collect all issues with overflow protection
         # Pydantic Field limits: tokens_used < 10000000, estimated_cost < 10000.0
-        MAX_TOKENS = 9999999
-        MAX_COST = 9999.99
         all_issues = []
         total_tokens = 0
         total_cost = 0.0
@@ -427,20 +429,20 @@ class ReviewResult(BaseModel):
                 total_cost += result.estimated_cost
 
                 # Cap at Pydantic field limits to prevent validation errors
-                if total_tokens >= MAX_TOKENS:
+                if total_tokens >= MAX_AGGREGATED_TOKENS:
                     _logger.warning(
                         "aggregate_token_overflow",
                         total=total_tokens,
-                        capped_at=MAX_TOKENS
+                        capped_at=MAX_AGGREGATED_TOKENS
                     )
-                    total_tokens = MAX_TOKENS
-                if total_cost >= MAX_COST:
+                    total_tokens = MAX_AGGREGATED_TOKENS
+                if total_cost >= MAX_AGGREGATED_COST:
                     _logger.warning(
                         "aggregate_cost_overflow",
                         total=total_cost,
-                        capped_at=MAX_COST
+                        capped_at=MAX_AGGREGATED_COST
                     )
-                    total_cost = MAX_COST
+                    total_cost = MAX_AGGREGATED_COST
             except Exception as e:
                 # v2.6.2: Don't let one bad result break entire aggregation
                 _logger.warning(

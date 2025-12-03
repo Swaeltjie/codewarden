@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.6.0 - Universal code review
+Version: 2.6.5 - Consolidated all constants
 """
 
 # =============================================================================
@@ -340,3 +340,52 @@ MAX_COMMON_ISSUES_PER_CATEGORY = 5
 
 # Maximum performance tips to include per file category
 MAX_PERFORMANCE_TIPS_PER_CATEGORY = 3
+
+# =============================================================================
+# CONTEXT MANAGER / REVIEW STRATEGY (v2.6.5)
+# =============================================================================
+
+# Maximum lines per file for token estimation (prevents integer overflow)
+MAX_LINES_PER_FILE = 100_000
+
+# Maximum tokens per file (caps token estimation)
+MAX_TOKENS_PER_FILE = 1_000_000
+
+# Strategy thresholds for determining review approach
+STRATEGY_SMALL_FILE_LIMIT = 5          # Max files for single-pass review
+STRATEGY_SMALL_TOKEN_LIMIT = 10_000    # Max tokens for single-pass review
+STRATEGY_MEDIUM_FILE_LIMIT = 15        # Max files for chunked review
+STRATEGY_MEDIUM_TOKEN_LIMIT = 40_000   # Max tokens for chunked review
+
+# Tokens per line estimate for code files
+TOKENS_PER_LINE_ESTIMATE = 6
+
+# =============================================================================
+# DIFF PARSING (v2.6.5)
+# =============================================================================
+
+# Maximum lines in a single hunk (DoS protection)
+MAX_HUNK_LINES = 10_000
+
+# =============================================================================
+# REVIEW RESULT LIMITS (v2.6.5)
+# =============================================================================
+
+# Maximum individual issue errors to log before summarizing
+MAX_LOGGED_ISSUE_ERRORS = 10
+
+# Maximum aggregated tokens value (Pydantic field limit protection)
+MAX_AGGREGATED_TOKENS = 9_999_999
+
+# Maximum aggregated cost value (Pydantic field limit protection)
+MAX_AGGREGATED_COST = 9_999.99
+
+# =============================================================================
+# QUERY LIMITS (v2.6.5)
+# =============================================================================
+
+# Maximum entries to process in idempotency statistics query
+MAX_IDEMPOTENCY_ENTRIES = 10_000
+
+# Maximum reviews to process in pattern detection query
+MAX_PATTERN_REVIEWS = 10_000

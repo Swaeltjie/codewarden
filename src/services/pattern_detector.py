@@ -4,7 +4,7 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.5.13 - Additional inline comments
+Version: 2.6.5 - Use centralized constants
 """
 import json
 from typing import List, Dict, Tuple, Optional
@@ -30,6 +30,7 @@ from src.utils.constants import (
     HEALTH_SCORE_RECURRING_PENALTY,
     REVIEW_HISTORY_TABLE_NAME,
     TABLE_STORAGE_BATCH_SIZE,
+    MAX_PATTERN_REVIEWS,
 )
 from src.utils.logging import get_logger
 
@@ -146,13 +147,12 @@ class PatternDetector:
             # Use pagination to avoid loading all reviews into memory
             # Apply safety limit DURING iteration to prevent OOM
             reviews = []
-            MAX_REVIEWS = 10000
             for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
                 # Check limit BEFORE appending to prevent loading excess data
-                if len(reviews) >= MAX_REVIEWS:
+                if len(reviews) >= MAX_PATTERN_REVIEWS:
                     logger.warning(
                         "pattern_analysis_truncated",
-                        max_reviews=MAX_REVIEWS,
+                        max_reviews=MAX_PATTERN_REVIEWS,
                         days=days,
                         reason="Safety limit to prevent memory exhaustion"
                     )
