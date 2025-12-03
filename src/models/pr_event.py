@@ -4,21 +4,19 @@ Pydantic Models for Pull Request Events
 
 Data models for Azure DevOps webhook payloads and file changes.
 
-Version: 2.5.14 - Enhanced branch validation
+Version: 2.6.0 - Universal code review with FileCategory
 """
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional
-from enum import Enum
+from typing import List, Optional, Union
 import re
 
+# Import FileCategory from the registry (the new comprehensive enum)
+from src.services.file_type_registry import FileCategory
 
-class FileType(str, Enum):
-    """Type of Infrastructure as Code file."""
-    TERRAFORM = "terraform"
-    ANSIBLE = "ansible"
-    PIPELINE = "pipeline"
-    JSON = "json"
-    UNKNOWN = "unknown"
+
+# Backward compatibility: FileType is now an alias for FileCategory
+# Old code using FileType.TERRAFORM will continue to work
+FileType = FileCategory
 
 
 class PREvent(BaseModel):
@@ -198,10 +196,13 @@ class PREvent(BaseModel):
 class FileChange(BaseModel):
     """
     Represents a changed file in the PR with diff analysis.
+
+    v2.6.0: Now supports any file type via FileCategory (40+ categories).
+    FileType is maintained as an alias for backward compatibility.
     """
-    
+
     path: str = Field(..., max_length=2000, description="File path relative to repo root")
-    file_type: FileType = Field(..., description="Type of IaC file")
+    file_type: FileCategory = Field(..., description="File category for review")
     diff_content: str = Field(..., max_length=1000000, description="Unified diff content")
     lines_added: int = Field(ge=0, lt=1000000, description="Number of lines added")
     lines_deleted: int = Field(ge=0, lt=1000000, description="Number of lines deleted")
@@ -210,6 +211,12 @@ class FileChange(BaseModel):
         max_length=10000,
         description="Parsed changed sections from diff parser"
     )
+
+    # Alias for backward compatibility and clearer semantics
+    @property
+    def file_category(self) -> FileCategory:
+        """Get the file category (alias for file_type)."""
+        return self.file_type
 
     @field_validator('path')
     @classmethod

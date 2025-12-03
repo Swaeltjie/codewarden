@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.5.13
+Version: 2.6.0 - Universal code review
 """
 
 # =============================================================================
@@ -318,3 +318,25 @@ DEFAULT_MAX_TOKENS = 4096
 
 # Default logging level for the application
 DEFAULT_LOG_LEVEL = "INFO"
+
+# =============================================================================
+# FILE TYPE REGISTRY (v2.6.0 - Universal Code Review)
+# =============================================================================
+
+# Default token estimate for unknown file types
+DEFAULT_TOKEN_ESTIMATE = 350
+
+# Maximum number of best practice items to include in a single prompt
+MAX_BEST_PRACTICES_IN_PROMPT = 20
+
+# LRU cache size for file classification results
+FILE_CATEGORY_CACHE_SIZE = 1000
+
+# Maximum security checks to include per file category
+MAX_SECURITY_CHECKS_PER_CATEGORY = 5
+
+# Maximum common issues to include per file category
+MAX_COMMON_ISSUES_PER_CATEGORY = 5
+
+# Maximum performance tips to include per file category
+MAX_PERFORMANCE_TIPS_PER_CATEGORY = 3

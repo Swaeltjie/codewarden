@@ -4,12 +4,13 @@ Context Manager for Review Strategy Selection
 
 Determines which review strategy to use based on PR size and complexity.
 
-Version: 2.5.13 - Additional inline comments
+Version: 2.6.0 - Universal code review with registry-based token estimates
 """
 from enum import Enum
 from typing import Dict, List
 
 from src.models.pr_event import FileChange, FileType
+from src.services.file_type_registry import FileTypeRegistry, FileCategory
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -25,18 +26,15 @@ class ReviewStrategy(str, Enum):
 class ContextManager:
     """
     Manages review context and determines optimal strategy.
-    
-    Simplified version for MVP - uses basic file count heuristics.
+
+    v2.6.0: Uses FileTypeRegistry for dynamic token estimates
+    supporting 40+ file categories.
     """
-    
+
     def __init__(self) -> None:
-        # Token estimates per file type (average)
-        self.token_estimates: Dict[FileType, int] = {
-            FileType.TERRAFORM: 300,
-            FileType.ANSIBLE: 400,
-            FileType.PIPELINE: 350,
-            FileType.JSON: 400
-        }
+        # Token estimates are now fetched from the registry
+        # This is kept for backward compatibility but uses registry internally
+        pass
     
     def determine_strategy(self, files: List[FileChange]) -> ReviewStrategy:
         """
@@ -90,7 +88,8 @@ class ContextManager:
         """
         Estimate token count for a file.
 
-        Uses changed sections for diff-only analysis estimate.
+        v2.6.0: Uses FileTypeRegistry for category-specific base estimates,
+        then adjusts based on actual changed sections.
 
         Args:
             file: FileChange object
@@ -98,7 +97,10 @@ class ContextManager:
         Returns:
             Estimated token count
         """
-        # If we have parsed changed sections, use those
+        # Get base estimate from registry based on file category
+        base_estimate = FileTypeRegistry.get_token_estimate(file.file_type)
+
+        # If we have parsed changed sections, use those for more accurate estimate
         if file.changed_sections and len(file.changed_sections) > 0:
             total_lines = sum(
                 len(section.context_before) +
@@ -108,10 +110,14 @@ class ContextManager:
                 for section in file.changed_sections
             )
             # Estimate: ~6 tokens per line
-            return total_lines * 6
+            line_based_estimate = total_lines * 6
 
-        # Fallback: use total changes
-        return max(0, file.total_changes * 6)
+            # Use the larger of base estimate or line-based estimate
+            return max(base_estimate, line_based_estimate)
+
+        # Fallback: use total changes or base estimate
+        changes_estimate = max(0, file.total_changes * 6)
+        return max(base_estimate, changes_estimate)
     
     def group_related_files(self, files: List[FileChange]) -> List[List[FileChange]]:
         """

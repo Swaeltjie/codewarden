@@ -4,18 +4,20 @@ Prompt Factory for AI Code Reviews
 
 Generates specialized prompts for different file types and review strategies.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.6.0 - Universal code review with dynamic best practices
 """
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 import re
 from src.models.pr_event import FileChange, FileType
 from src.services.diff_parser import DiffParser
+from src.services.file_type_registry import FileTypeRegistry, FileCategory
 from src.utils.constants import (
     PROMPT_MAX_TITLE_LENGTH,
     PROMPT_MAX_PATH_LENGTH,
     PROMPT_MAX_MESSAGE_LENGTH,
     PROMPT_MAX_ISSUE_TYPE_LENGTH,
     LOG_FIELD_MAX_LENGTH,
+    MAX_BEST_PRACTICES_IN_PROMPT,
 )
 from src.utils.logging import get_logger
 
@@ -203,7 +205,7 @@ class PromptFactory:
         # Header (sanitized)
         prompt_parts.append(f"# Pull Request Review: {safe_pr_title}")
         prompt_parts.append("")
-        prompt_parts.append("Review the following Infrastructure as Code changes.")
+        prompt_parts.append("Review the following code changes for security, best practices, and code quality.")
         prompt_parts.append("")
 
         # Add learning context if available (Phase 2 implementation)
@@ -367,55 +369,48 @@ class PromptFactory:
     
     def _get_review_instructions(self, files: List[FileChange]) -> str:
         """
-        Get review instructions based on file types.
-        
+        Get review instructions based on file categories.
+
+        v2.6.0: Uses FileTypeRegistry for dynamic best practices.
+        Supports 40+ file categories with comprehensive guidance.
+
         Args:
             files: Files being reviewed
-            
+
         Returns:
-            Review instructions
+            Review instructions with category-specific best practices
         """
-        file_types = set(f.file_type for f in files)
-        
+        # Get unique categories from files
+        categories: Set[FileCategory] = set(f.file_type for f in files)
+
         instructions = ["## Review Instructions", ""]
-        
+
+        # Common focus areas (apply to all files)
         instructions.append("Focus on:")
-        instructions.append("1. **Security**: Exposed endpoints, hardcoded secrets, weak permissions")
-        instructions.append("2. **Best Practices**: Resource naming, tags, configuration")
-        instructions.append("3. **Reliability**: Error handling, retries, timeouts")
-        instructions.append("4. **Cost Optimization**: Unnecessary resources, oversized instances")
+        instructions.append("1. **Security**: Exposed endpoints, hardcoded secrets, weak permissions, injection vulnerabilities")
+        instructions.append("2. **Best Practices**: Code quality, naming conventions, documentation, error handling")
+        instructions.append("3. **Reliability**: Error handling, edge cases, resource management")
+        instructions.append("4. **Performance**: Inefficient patterns, unnecessary operations, optimization opportunities")
         instructions.append("")
-        
-        # Add file-type specific instructions
-        if FileType.TERRAFORM in file_types:
-            instructions.append("**Terraform-specific:**")
-            instructions.append("- Check for public endpoints without firewall rules")
-            instructions.append("- Verify state backend configuration")
-            instructions.append("- Look for missing required tags")
+
+        # Add category-specific instructions using the registry
+        category_instructions = FileTypeRegistry.format_best_practices_for_prompt(
+            categories=list(categories),
+            max_practices=MAX_BEST_PRACTICES_IN_PROMPT
+        )
+
+        if category_instructions:
+            instructions.append("## Category-Specific Guidelines")
             instructions.append("")
-        
-        if FileType.ANSIBLE in file_types:
-            instructions.append("**Ansible-specific:**")
-            instructions.append("- Check for hardcoded passwords/secrets")
-            instructions.append("- Verify idempotency")
-            instructions.append("- Look for missing error handling")
-            instructions.append("")
-        
-        if FileType.PIPELINE in file_types:
-            instructions.append("**Pipeline-specific:**")
-            instructions.append("- Check for secure variable usage")
-            instructions.append("- Verify approval gates for production")
-            instructions.append("- Look for missing error handling")
-            instructions.append("")
-        
-        if FileType.JSON in file_types:
-            instructions.append("**JSON Configuration-specific:**")
-            instructions.append("- Validate JSON structure and syntax")
-            instructions.append("- Check for hardcoded secrets or sensitive data")
-            instructions.append("- Verify proper use of environment variables")
-            instructions.append("- Look for configuration best practices")
-            instructions.append("")
-        
+            instructions.append(category_instructions)
+
+        # Log categories included
+        logger.debug(
+            "review_instructions_generated",
+            categories=[c.value for c in categories],
+            category_count=len(categories)
+        )
+
         return "\n".join(instructions)
     
     def _get_response_format(self) -> str:

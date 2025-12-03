@@ -5,6 +5,116 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2025-12-03
+
+### Added - Universal Code Review with Best Practices
+
+**Major Feature: Any File Type Review**
+- CodeWarden now reviews **ANY file type** with context-aware best practices
+- Previously limited to 4 file types (Terraform, Ansible, Pipeline, JSON)
+- Now supports **40+ file categories** with comprehensive review guidance
+
+**New File Type Registry** (`src/services/file_type_registry.py`)
+- Comprehensive `FileCategory` enum with 40+ categories:
+  - **Programming Languages**: Python, JavaScript, TypeScript, Java, C#, Go, Rust, C++, Ruby, PHP, Swift, Kotlin, Scala
+  - **Infrastructure as Code**: Terraform, Ansible, CloudFormation, Kubernetes, Docker, Helm, Bicep, Pulumi
+  - **CI/CD Pipelines**: Azure Pipelines, GitHub Actions, GitLab CI, Jenkins
+  - **Configuration**: JSON, YAML, TOML, XML, INI, ENV, Properties
+  - **Web Development**: HTML, CSS, SCSS, Vue, Svelte
+  - **Data & Query**: SQL, GraphQL
+  - **Shell & Scripts**: Bash, PowerShell, Batch
+  - **Documentation**: Markdown, RST
+  - **Build Systems**: Makefile, CMake, Gradle, Maven
+  - **Package Management**: NPM (package.json), Requirements (requirements.txt), Gemfile, Cargo
+  - **Generic**: Fallback for unknown types (still reviewed!)
+
+**BestPractices System**
+- `BestPractices` dataclass with category-specific guidance:
+  - `focus_areas`: Primary review focus points
+  - `security_checks`: Security vulnerabilities to detect
+  - `common_issues`: Frequent problems and anti-patterns
+  - `style_guidelines`: Code style and convention checks
+  - `performance_tips`: Performance optimization suggestions
+- Comprehensive best practices for all 40+ categories
+- Examples:
+  - **Python**: SQL injection, pickle vulnerabilities, mutable default args, generators
+  - **Kubernetes**: Running as root, missing network policies, resource limits, RBAC
+  - **Docker**: Root user, secrets in build args, multi-stage builds, .dockerignore
+  - **GitHub Actions**: Secrets in logs, action pinning with SHA, workflow permissions
+
+**Intelligent File Classification**
+- Extension-based classification (`.py` → Python, `.tf` → Terraform)
+- Path pattern matching for context-aware detection:
+  - `**/k8s/**/*.yaml` → Kubernetes (not generic YAML)
+  - `**/.github/workflows/*.yml` → GitHub Actions
+  - `**/kubernetes/**/*.yaml` → Kubernetes
+  - `**/ansible/**/*.yml` → Ansible
+  - `**/helm/**/*.yaml` → Helm
+- Priority-based classification (path patterns > extensions)
+- LRU caching for classification performance
+
+**Dynamic Prompt Generation**
+- AI prompts now include category-specific best practices
+- `FileTypeRegistry.format_best_practices_for_prompt()` generates focused instructions
+- Configurable max practices per prompt (`MAX_BEST_PRACTICES_IN_PROMPT = 20`)
+- Security checks, common issues, and performance tips included per category
+
+### Changed
+
+**File Classification Behavior**
+- **UNKNOWN files are now reviewed!** - Previously filtered out, now get GENERIC review
+- All files in PR now receive intelligent review with appropriate best practices
+- `_classify_file()` method uses registry instead of hardcoded switch
+
+**Updated Files**:
+| File | Changes |
+|------|---------|
+| `src/services/file_type_registry.py` | **NEW** - Core registry implementation (~2000 lines) |
+| `src/models/pr_event.py` | FileCategory import, FileType alias for compatibility |
+| `src/handlers/pr_webhook.py` | Registry-based classification, no UNKNOWN filtering |
+| `src/prompts/factory.py` | Dynamic best practices from registry |
+| `src/services/context_manager.py` | Registry-based token estimates |
+| `src/utils/constants.py` | New registry constants |
+| `src/utils/config.py` | Version 2.6.0 |
+
+**New Constants** (`src/utils/constants.py`):
+- `DEFAULT_TOKEN_ESTIMATE = 350` - Base token estimate for unknown types
+- `MAX_BEST_PRACTICES_IN_PROMPT = 20` - Limit practices per prompt
+- `FILE_CATEGORY_CACHE_SIZE = 1000` - LRU cache for classification
+- `MAX_SECURITY_CHECKS_PER_CATEGORY = 5` - Limit security checks
+- `MAX_COMMON_ISSUES_PER_CATEGORY = 5` - Limit common issues
+- `MAX_PERFORMANCE_TIPS_PER_CATEGORY = 3` - Limit performance tips
+
+### Technical Details
+
+**FileTypeRegistry API**:
+- `classify(file_path: str) -> FileCategory` - Classify a file
+- `get_best_practices(category: FileCategory) -> BestPractices` - Get review guidance
+- `get_token_estimate(category: FileCategory) -> int` - Get token estimate
+- `format_best_practices_for_prompt(categories, max_practices) -> str` - Generate prompt section
+
+**Backward Compatibility**:
+- `FileType = FileCategory` alias maintained for existing code
+- Old `FileType.TERRAFORM`, `FileType.ANSIBLE`, etc. still work
+- `FileType.UNKNOWN` maps to `FileCategory.GENERIC`
+- `FileChange.file_category` property added as alias for `file_type`
+
+### Migration Notes
+
+- No breaking changes - fully backward compatible with v2.5.14
+- All existing code using `FileType` continues to work
+- New categories automatically applied to all PRs
+- Best practices immediately available for all file types
+
+### Impact
+
+- **Coverage**: From 4 file types to 40+ categories
+- **Review Quality**: Category-specific security, issues, and performance guidance
+- **Developer Experience**: All files get intelligent review, not just IaC
+- **Extensibility**: Easy to add new categories via registry
+
+---
+
 ## [2.5.14] - 2025-12-03
 
 ### Fixed - Security & Reliability Issues from Code Review

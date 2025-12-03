@@ -12,11 +12,12 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.6.0 - Universal code review (any file type)
 """
 import asyncio
 from typing import List, Optional, Tuple
 from datetime import datetime, timezone
+from collections import Counter
 
 from src.models.pr_event import PREvent, FileChange, FileType
 from src.models.review_result import ReviewResult, ReviewIssue
@@ -28,6 +29,7 @@ from src.services.feedback_tracker import FeedbackTracker
 from src.services.context_manager import ContextManager, ReviewStrategy
 from src.services.idempotency_checker import IdempotencyChecker
 from src.services.response_cache import ResponseCache
+from src.services.file_type_registry import FileTypeRegistry, FileCategory
 from src.prompts.factory import PromptFactory
 from src.utils.config import get_settings
 from src.utils.table_storage import get_table_client, ensure_table_exists
@@ -141,19 +143,21 @@ class PRWebhookHandler:
             changed_files = await self._fetch_changed_files(pr_event, pr_details)
 
             if not changed_files:
-                request_logger.info("no_iac_files_found")
+                request_logger.info("no_files_to_review")
                 return ReviewResult.create_empty(
                     pr_id=pr_event.pr_id,
-                    message="No IaC files found in this PR"
+                    message="No files found to review in this PR"
                 )
-            
+
+            # Count files by category for logging (v2.6.0 - universal review)
+            category_counts = Counter(f.file_type.value for f in changed_files)
+            top_categories = dict(category_counts.most_common(5))  # Log top 5 categories
+
             request_logger.info(
                 "changed_files_classified",
                 total_files=len(changed_files),
-                terraform=sum(1 for f in changed_files if f.file_type == FileType.TERRAFORM),
-                ansible=sum(1 for f in changed_files if f.file_type == FileType.ANSIBLE),
-                pipeline=sum(1 for f in changed_files if f.file_type == FileType.PIPELINE),
-                json=sum(1 for f in changed_files if f.file_type == FileType.JSON)
+                unique_categories=len(category_counts),
+                top_categories=top_categories
             )
             
             # Step 3: Parse diffs (diff-only analysis)
@@ -254,8 +258,9 @@ class PRWebhookHandler:
         pr_details: dict
     ) -> List[FileChange]:
         """
-        Fetch changed files and filter for IaC files only.
+        Fetch changed files for review.
 
+        v2.6.0: Now fetches ALL file types - no longer filters.
         Uses semaphore-limited parallel fetching to prevent overwhelming
         Azure DevOps API while maintaining efficiency.
 
@@ -264,7 +269,7 @@ class PRWebhookHandler:
             pr_details: PR details from DevOps
 
         Returns:
-            List of FileChange objects (IaC files only)
+            List of FileChange objects (all file types)
         """
         all_files = pr_details.get('files', [])
 
@@ -292,7 +297,7 @@ class PRWebhookHandler:
             *[fetch_with_context(file) for file in all_files]
         )
 
-        # Build FileChange objects and filter for IaC
+        # Build FileChange objects for ALL files (v2.6.0 - universal review)
         changed_files = []
         error_count = 0
 
@@ -308,18 +313,18 @@ class PRWebhookHandler:
                 )
                 continue
 
-            # Determine file type
-            file_type = self._classify_file_type(file_info['path'])
+            # Classify file using the registry (v2.6.0)
+            file_category = self._classify_file(file_info['path'])
 
-            # Only include IaC files
-            if file_type != FileType.UNKNOWN:
-                changed_files.append(FileChange(
-                    path=file_info['path'],
-                    file_type=file_type,
-                    diff_content=diff_result,
-                    lines_added=file_info.get('linesAdded', 0),
-                    lines_deleted=file_info.get('linesDeleted', 0)
-                ))
+            # Include ALL files - no filtering! (v2.6.0)
+            # Even "generic" category files get basic best practice review
+            changed_files.append(FileChange(
+                path=file_info['path'],
+                file_type=file_category,
+                diff_content=diff_result,
+                lines_added=file_info.get('linesAdded', 0),
+                lines_deleted=file_info.get('linesDeleted', 0)
+            ))
 
         if error_count > 0:
             logger.warning(
@@ -331,78 +336,31 @@ class PRWebhookHandler:
 
         return changed_files
     
-    def _classify_file_type(self, file_path: str) -> FileType:
+    def _classify_file(self, file_path: str) -> FileCategory:
         """
-        Classify file based on path and extension.
+        Classify file using the FileTypeRegistry.
+
+        v2.6.0: Uses comprehensive registry with 40+ file categories.
+        Includes path pattern matching for context-aware classification.
 
         Args:
             file_path: Relative path to file
 
         Returns:
-            FileType enum
+            FileCategory enum (never UNKNOWN - falls back to GENERIC)
         """
         # Check for excessively long paths (DoS protection)
         if len(file_path) > 2000:  # Match FileChange.path max_length
             logger.warning("file_path_too_long", path_length=len(file_path))
-            return FileType.UNKNOWN
+            return FileCategory.GENERIC
 
         # Sanitize file path to prevent path traversal
         if not self._is_safe_path(file_path):
             logger.warning("unsafe_file_path_detected", path=file_path)
-            return FileType.UNKNOWN
+            return FileCategory.GENERIC
 
-        path_lower = file_path.lower()
-        
-        # Terraform
-        if path_lower.endswith(('.tf', '.tfvars')):
-            return FileType.TERRAFORM
-        
-        # YAML files - need to distinguish Ansible vs Pipelines
-        if path_lower.endswith(('.yaml', '.yml')):
-            # Pipeline indicators
-            if any(x in path_lower for x in [
-                'azure-pipelines',
-                '.azuredevops',
-                'pipelines/',
-                '.azure-pipelines'
-            ]):
-                return FileType.PIPELINE
-            
-            # Ansible indicators
-            if any(x in path_lower for x in [
-                'ansible',
-                'playbooks',
-                'roles/',
-                'playbook',
-                'site.yml'
-            ]):
-                return FileType.ANSIBLE
-            
-            # Default YAML to Ansible (can be refined)
-            return FileType.ANSIBLE
-        
-        # JSON configuration files
-        if path_lower.endswith('.json'):
-            # Exclude common non-IaC JSON files
-            excluded_json = [
-                'package.json',
-                'package-lock.json',
-                'tsconfig.json',
-                'jsconfig.json',
-                'settings.json',
-                '.vscode/',
-                'node_modules/',
-                '.eslintrc.json',
-                '.prettierrc.json'
-            ]
-
-            if any(x in path_lower for x in excluded_json):
-                return FileType.UNKNOWN
-
-            # All other JSON files are treated as configuration/IaC
-            return FileType.JSON
-        
-        return FileType.UNKNOWN
+        # Use the registry for classification
+        return FileTypeRegistry.classify(file_path)
 
     def _is_safe_path(self, file_path: str) -> bool:
         """
