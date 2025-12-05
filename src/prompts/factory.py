@@ -405,9 +405,10 @@ class PromptFactory:
             instructions.append(category_instructions)
 
         # Log categories included
+        # Note: categories are already strings due to use_enum_values=True in FileChange
         logger.debug(
             "review_instructions_generated",
-            categories=[c.value for c in categories],
+            categories=list(categories),
             category_count=len(categories)
         )
 

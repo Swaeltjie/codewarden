@@ -112,6 +112,7 @@ az functionapp config appsettings set \
     KEYVAULT_URL="https://<keyvault-name>.vault.azure.net/" \
     AZURE_STORAGE_ACCOUNT_NAME="<storage-account-name>" \
     AZURE_DEVOPS_ORG="<your-org-name>" \
+    AZURE_AI_DEPLOYMENT="gpt-5" \
     OPENAI_MODEL="gpt-4o" \
     LOG_LEVEL="INFO" \
     ENVIRONMENT="production"
@@ -152,7 +153,8 @@ AZURE_STORAGE_ACCOUNT_NAME=<storage-account-name>
 AZURE_DEVOPS_ORG=<your-org>
 
 # AI Configuration
-OPENAI_MODEL=gpt-4o
+AZURE_AI_DEPLOYMENT=gpt-5            # Recommended: GPT-5 for better accuracy
+OPENAI_MODEL=gpt-4o                  # Fallback model
 OPENAI_MAX_TOKENS=4000
 
 # Application

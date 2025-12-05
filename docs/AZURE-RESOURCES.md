@@ -71,35 +71,41 @@ az storage table create --name reviewhistory --account-name staiprreviewer
 ### 3. Function App
 **Name:** `func-ai-pr-reviewer`
 **Runtime:** Python 3.12, Functions v4, Linux
-**Cost:** $0.10/month (Consumption) or $150/month (Premium)
+**Cost:** $0.10/month (Flex Consumption) or $150/month (Premium)
 
-**Contains 4 functions:**
+**Contains 6 functions:**
 1. `pr-webhook` (HTTP) - Receives PR webhooks
 2. `feedback-collector` (Timer) - Runs hourly
 3. `pattern-detector` (Timer) - Runs daily at 2 AM
 4. `health` (HTTP) - Health check endpoint
 5. `reliability-health` (HTTP) - Reliability metrics
+6. `circuit-breaker-admin` (HTTP) - Circuit breaker management
 
 ```bash
+# Flex Consumption (Recommended)
 az functionapp create \
   --resource-group rg-ai-pr-reviewer \
-  --consumption-plan-location eastus \
-  --runtime python \
-  --runtime-version 3.12 \
-  --functions-version 4 \
   --name func-ai-pr-reviewer \
   --storage-account staiprreviewer \
-  --os-type Linux
+  --flexconsumption-location eastus \
+  --runtime python \
+  --runtime-version 3.12 \
+  --functions-version 4
 ```
 
-**Consumption vs Premium:**
+**Note:** Linux Consumption plan reaches EOL September 30, 2028. Use Flex Consumption for new deployments.
 
-| Feature | Consumption | Premium EP1 |
-|---------|-------------|-------------|
+**Flex Consumption Supported Python Versions:** 3.10, 3.11, 3.12
+
+**Hosting Plan Comparison:**
+
+| Feature | Flex Consumption | Premium EP1 |
+|---------|------------------|-------------|
 | Cost | $0.10/100 PRs | $150/month fixed |
-| Cold start | ~2.5 seconds | None |
-| Scale | 0-200 instances | Always-warm |
-| Best for | Dev/PoC | Production |
+| Cold start | Reduced (~1s) | None |
+| Scale | 0-1000 instances | Always-warm |
+| Private networking | Supported | Supported |
+| Best for | Dev/PoC/Production | High-traffic production |
 
 ### 4. Key Vault
 **Name:** `kv-ai-pr-reviewer`
@@ -112,22 +118,27 @@ az functionapp create \
 **Access:** Function App uses Managed Identity (no credentials!)
 
 ```bash
-# Create Key Vault
+# Create Key Vault (RBAC enabled by default)
 az keyvault create \
   --name kv-ai-pr-reviewer \
   --resource-group rg-ai-pr-reviewer \
   --location eastus
 
-# Grant Function App access
+# Grant Function App access (using RBAC)
 PRINCIPAL_ID=$(az functionapp identity show \
   --name func-ai-pr-reviewer \
   --resource-group rg-ai-pr-reviewer \
   --query principalId -o tsv)
 
-az keyvault set-policy \
+KEYVAULT_ID=$(az keyvault show \
   --name kv-ai-pr-reviewer \
-  --object-id $PRINCIPAL_ID \
-  --secret-permissions get list
+  --resource-group rg-ai-pr-reviewer \
+  --query id -o tsv)
+
+az role assignment create \
+  --assignee $PRINCIPAL_ID \
+  --role "Key Vault Secrets User" \
+  --scope $KEYVAULT_ID
 ```
 
 ---

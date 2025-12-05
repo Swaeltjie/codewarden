@@ -15,7 +15,7 @@ Orchestrates the entire PR review workflow:
 Version: 2.6.2 - Reliability improvements
 """
 import asyncio
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 from collections import Counter
 
@@ -144,15 +144,22 @@ class PRWebhookHandler:
                 repository_id=pr_event.repository_id,
                 pr_id=pr_event.pr_id
             )
-            
+
+            # Step 1b: Fetch changed files list (separate API call)
+            file_list = await self.devops_client.get_pull_request_files(
+                project_id=pr_event.project_id,
+                repository_id=pr_event.repository_id,
+                pr_id=pr_event.pr_id
+            )
+
             request_logger.info(
                 "pr_details_fetched",
                 title=pr_details.get('title'),
-                file_count=len(pr_details.get('files', []))
+                file_count=len(file_list)
             )
 
             # Step 2: Get changed files with diffs
-            changed_files = await self._fetch_changed_files(pr_event, pr_details)
+            changed_files = await self._fetch_changed_files(pr_event, file_list)
 
             if not changed_files:
                 request_logger.info("no_files_to_review")
@@ -162,7 +169,8 @@ class PRWebhookHandler:
                 )
 
             # Count files by category for logging (v2.6.0 - universal review)
-            category_counts = Counter(f.file_type.value for f in changed_files)
+            # Note: file_type is already a string due to use_enum_values=True in FileChange
+            category_counts = Counter(f.file_type for f in changed_files)
             top_categories = dict(category_counts.most_common(5))  # Log top 5 categories
 
             request_logger.info(
@@ -267,7 +275,7 @@ class PRWebhookHandler:
     async def _fetch_changed_files(
         self,
         pr_event: PREvent,
-        pr_details: dict
+        file_list: List[Dict]
     ) -> List[FileChange]:
         """
         Fetch changed files for review.
@@ -278,12 +286,12 @@ class PRWebhookHandler:
 
         Args:
             pr_event: PR event
-            pr_details: PR details from DevOps
+            file_list: List of file changes from get_pull_request_files()
 
         Returns:
             List of FileChange objects (all file types)
         """
-        all_files = pr_details.get('files', [])
+        all_files = file_list
 
         async def fetch_with_context(file_info: dict) -> Tuple[dict, str, Optional[Exception]]:
             """
@@ -291,11 +299,17 @@ class PRWebhookHandler:
 
             Returns tuple of (file_info, diff_content, error) to preserve context.
             """
+            # changeEntries API returns path in item.path
+            file_path = file_info.get('item', {}).get('path', file_info.get('path', ''))
+            if not file_path:
+                return (file_info, "", ValueError("No file path in change entry"))
+
             async with self._review_semaphore:
                 try:
                     diff = await self.devops_client.get_file_diff(
+                        project_id=pr_event.project_id,
                         repository_id=pr_event.repository_id,
-                        file_path=file_info['path'],
+                        file_path=file_path,
                         source_commit=pr_event.source_branch,
                         target_commit=pr_event.target_branch
                     )
@@ -314,28 +328,31 @@ class PRWebhookHandler:
         error_count = 0
 
         for file_info, diff_result, error in results:
+            # Extract path from changeEntries structure (item.path)
+            file_path = file_info.get('item', {}).get('path', file_info.get('path', ''))
+
             # Log failures with preserved context
             if error is not None:
                 error_count += 1
                 logger.warning(
                     "diff_fetch_failed",
-                    file_path=file_info['path'],
+                    file_path=file_path,
                     error=str(error),
                     error_type=type(error).__name__
                 )
                 continue
 
             # Classify file using the registry (v2.6.0)
-            file_category = self._classify_file(file_info['path'])
+            file_category = self._classify_file(file_path)
 
             # Include ALL files - no filtering! (v2.6.0)
             # Even "generic" category files get basic best practice review
             changed_files.append(FileChange(
-                path=file_info['path'],
+                path=file_path,
                 file_type=file_category,
                 diff_content=diff_result,
-                lines_added=file_info.get('linesAdded', 0),
-                lines_deleted=file_info.get('linesDeleted', 0)
+                lines_added=file_info.get('item', {}).get('linesAdded', 0),
+                lines_deleted=file_info.get('item', {}).get('linesDeleted', 0)
             ))
 
         if error_count > 0:
@@ -396,7 +413,10 @@ class PRWebhookHandler:
             return False
 
         # Check for absolute paths (should be relative)
-        if os.path.isabs(file_path):
+        # Note: Azure DevOps returns repo root-relative paths starting with '/'
+        # like '/azure-pipelines.yml' - these are safe and expected
+        path_to_check = file_path.lstrip('/') if file_path.startswith('/') else file_path
+        if os.path.isabs(path_to_check):
             return False
 
         # Check for suspicious patterns BEFORE normalization
@@ -608,7 +628,7 @@ class PRWebhookHandler:
                 repository=repository,
                 diff_content=file.diff_content,
                 file_path=file.path,
-                file_type=file.file_type.value if file.file_type else "unknown",
+                file_type=file.file_type if file.file_type else "unknown",
                 review_result=result,
                 tokens_used=metadata.get('tokens_used', 0),
                 estimated_cost=metadata.get('estimated_cost', 0.0),

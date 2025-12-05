@@ -5,6 +5,475 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.23] - 2025-12-05
+
+### Fixed - GPT-5 Parameter Compatibility
+
+**Critical: GPT-5 API Parameter Restrictions**
+- GPT-5 and o1 reasoning models have strict parameter requirements
+- Fixed temperature parameter causing `BadRequestError`
+- Fixed max_completion_tokens truncating responses at 4000 tokens
+
+**Fixes Applied:**
+
+1. **Temperature Parameter Removed for Reasoning Models**
+   - Error: `Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported.`
+   - Fix: Skip temperature parameter for GPT-5 and o1 models (they only support default value of 1)
+   - Models affected: gpt-5, o1-*, o1_*
+
+2. **OPENAI_MAX_TOKENS Increased to 128K**
+   - Problem: AI responses were truncated at exactly 4000 tokens, causing `AI returned invalid JSON` errors
+   - Root cause: Environment variable `OPENAI_MAX_TOKENS=4000` was limiting output
+   - Fix: Updated to `OPENAI_MAX_TOKENS=128000` (GPT-5 max output capacity)
+   - Note: Environment variable takes precedence over code defaults
+
+**Files Changed:**
+- `src/services/ai_client.py` - Skip temperature for reasoning models
+- `src/utils/constants.py` - DEFAULT_MAX_TOKENS = 128000
+- `docs/DEPLOYMENT-GUIDE.md` - Updated OPENAI_MAX_TOKENS examples
+- Azure Function App setting: OPENAI_MAX_TOKENS=128000
+
+**Symptoms Before Fix:**
+```
+BadRequestError: Unsupported value: 'temperature' does not support 0.2
+ai_response_invalid_json: Expecting value: line 1 column 1 (char 0)
+completion_tokens: 4000  # Truncated!
+```
+
+**After Fix:**
+```
+ai_review_completed: completion_tokens: 3687  # Natural completion
+devops_comment_posted: thread_id: 117403  # Success!
+```
+
+---
+
+## [2.6.22] - 2025-12-05
+
+### Reverted - Azure AI Foundry Agent Integration
+
+**Reverted v2.8.0 Foundry integration.** The azure-ai-agents SDK had authentication and API issues in the Azure Function environment.
+
+**Back to Direct API Calls:**
+- Using `AsyncAzureOpenAI` client directly with chat completions API
+- System prompt in `ai_client.py` handles security and quality review
+- Simpler, more reliable architecture
+
+**Removed:**
+- `src/services/foundry_client.py`
+- `src/agents/` directory
+- `azure-ai-agents` / `azure-ai-projects` dependencies
+
+---
+
+## [2.6.21] - 2025-12-05
+
+### Fixed - Fetch Actual File Content When Diff Blocks Missing
+
+**Problem:** Even after fixing the diff API URL (v2.6.20), the AI still found 0 issues because the Azure DevOps API was returning metadata but not actual diff content ('blocks' field missing).
+
+**Root Cause:** The `diffs/commits` API returns file change metadata (changeType, path, objectId) but doesn't always include detailed line-by-line 'blocks' with actual content. The fallback code was generating placeholder text like `"+[New file - content not available]"` instead of actual file content.
+
+**Solution (v2.6.21):** When the API doesn't return 'blocks', now fetch actual file content:
+- **New files (`add`):** Fetch content from source branch, generate diff showing all lines as `+` additions
+- **Deleted files (`delete`):** Fetch content from target branch, generate diff showing all lines as `-` deletions
+- **Modified files (`edit`):** Fetch both versions and use Python's `difflib.unified_diff()` to generate proper diff
+
+**New Methods Added:**
+- `_generate_add_diff(file_path, content)` - Creates diff for new files
+- `_generate_delete_diff(file_path, content)` - Creates diff for deleted files
+- `_generate_edit_diff(file_path, old_content, new_content)` - Creates diff using difflib
+
+**Files Changed:**
+- `src/services/azure_devops.py` - Added content fetching fallback and 3 new diff generation methods
+- `src/utils/config.py` - Version 2.6.21
+
+---
+
+## [2.6.20] - 2025-12-05
+
+### Fixed - Diff Fetching 404 Errors (Final Fix)
+
+**Problem:** v2.6.19 still had 404 errors. After consulting [Azure DevOps Diffs API documentation](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/diffs/get), found the correct URL format.
+
+**Root Cause:** Two issues with the API URL:
+1. Branch refs like `refs/heads/main` should be plain branch names: `main`
+2. Project ID IS required in the URL path
+
+**Correct URL (v2.6.20):**
+```
+https://dev.azure.com/{org}/{project}/_apis/git/repositories/{repo}/diffs/commits?baseVersion=main&targetVersion=feature/xyz
+```
+
+**What was wrong:**
+- v2.6.17: Used `GBmain` prefix (wrong for query params)
+- v2.6.18: Used full refs `refs/heads/main` (should be `main`)
+- v2.6.19: Removed project from URL (project IS required)
+
+**Files Changed:**
+- `src/services/azure_devops.py` - Fixed URL: project in path + plain branch names
+- `src/utils/config.py` - Version 2.6.20
+
+---
+
+## [2.6.17] - 2025-12-05
+
+### Changed - GPT-5 Recommended for Production
+
+**Upgrade:** Switched from GPT-4o to GPT-5 as the recommended model for code reviews.
+
+**Why GPT-5:**
+- Superior code understanding with fewer false positives
+- No longer flags standard patterns (module sources, default tags) as issues
+- Finds real issues that GPT-4o missed (e.g., missing required Terraform blocks)
+- Correct line number attribution for inline comments
+- Better severity classification
+
+**Testing Comparison (same Terraform policy file):**
+| Aspect | GPT-4o | GPT-5 |
+|--------|--------|-------|
+| False positive | "IAMWildcardPermission" on module source | None |
+| Real issues found | Missed actual problems | Found missing `policy_rule` block |
+| Line numbers | Wrong line | Correct line 18 |
+
+**Configuration:**
+Set `AZURE_AI_DEPLOYMENT=gpt-5` in Azure Function App settings.
+
+**Technical Notes:**
+- GPT-5 is a reasoning model - uses internal reasoning tokens
+- No `response_format: json_object` (may return empty content with reasoning models)
+- No `temperature` parameter for Azure OpenAI reasoning models
+- Uses `max_completion_tokens` instead of `max_tokens`
+- JSON is extracted from freeform text response
+
+**Files Changed:**
+- `src/services/ai_client.py` - GPT-5 support with proper reasoning model handling
+- `src/utils/config.py` - Version 2.6.17
+- `docs/DEPLOYMENT-GUIDE.md` - Updated for GPT-5
+- `docs/MANAGED-IDENTITY-SETUP.md` - Updated for GPT-5
+
+---
+
+## [2.6.16] - 2025-12-05
+
+### Fixed - Enforce Specific Line Numbers in AI Responses
+
+**Problem:** AI was inconsistently returning "File-level" (line_number: 0) instead of specific line numbers, preventing inline diff comments from being posted.
+
+**Solution:** Strengthened prompts to enforce specific line numbers:
+- System prompt: "ALWAYS provide specific line numbers - NEVER use 0"
+- Response format: "line_number MUST be a specific line number from the diff"
+- Added explanation that line numbers enable inline PR comments
+
+**Files Changed:**
+- `src/services/ai_client.py` - Stronger line number enforcement in system prompt
+- `src/prompts/factory.py` - Updated response format requirements
+- `src/utils/config.py` - Version updated to 2.6.16
+
+---
+
+## [2.6.15] - 2025-12-05
+
+### Changed - Inline Comments for Critical AND High Severity
+
+Extended inline diff comments to include high severity issues (previously critical only).
+
+**Behavior:**
+- Summary comment: Always posted, contains all issues
+- Inline comments: For `severity in ("critical", "high")` AND `line_number > 0`
+- Medium/Low/Info issues only appear in summary
+
+**Files Changed:**
+- `src/handlers/pr_webhook.py` - Extended inline to include high severity
+- `src/utils/config.py` - Version updated to 2.6.15
+
+---
+
+## [2.6.14] - 2025-12-05
+
+### Added - Hybrid Comment Approach (Summary + Critical Inline)
+
+**Feature:** Best of both worlds for PR review comments
+- Always posts 1 summary comment with all issues (clean overview)
+- Posts inline comments directly in the diff for CRITICAL issues only
+- Inline comments only for issues with specific line numbers (not "File-level")
+- Critical issues are now visible right where the problem is in the code
+
+**Behavior:**
+- Summary comment: Always posted, contains all issues
+- Inline comments: Only for `severity == "critical"` AND `line_number > 0`
+- File-level critical issues still appear in summary but not inline
+
+**Files Changed:**
+- `src/handlers/pr_webhook.py` - Hybrid posting logic
+- `src/utils/config.py` - Version updated to 2.6.14
+
+---
+
+## [2.6.13] - 2025-12-05
+
+### Improved - Enhanced AI System Prompt for Better Review Quality
+
+**Problem:** Reviews had too many false positives and vague suggestions
+- "MissingTags" flagged on a tag policy file (nonsensical)
+- "HardcodedValues" for standard Terraform default tags
+- "File-level" line numbers instead of specific lines
+- Vague suggestions like "Review and restrict permissions"
+
+**Solution:** Added comprehensive CodeWarden system prompt with:
+- Clear guidance on what to flag (real security issues only)
+- Explicit false positive avoidance rules
+- Severity guidelines for consistent classification
+- Emphasis on specific line numbers and actionable fixes
+- Rule: "Never flag the purpose of a file as an issue"
+
+**Files Changed:**
+- `src/services/ai_client.py` - Added `SYSTEM_PROMPT` constant with comprehensive guidance
+- `src/utils/config.py` - Version updated to 2.6.13
+
+---
+
+## [2.6.12] - 2025-12-05
+
+### Fixed - Single Comment Per PR & Duplicate Webhook Handling
+
+**Issue 1: Multiple Comments Per PR**
+- Previously posted 1 summary comment + N inline comments for critical/high issues
+- This created noise with 4+ comments per review
+- Now posts only a single summary comment containing all issues
+
+**Issue 2: Duplicate Reviews from Simultaneous Webhooks**
+- Both "pull request created" and "pull request updated" webhooks fire simultaneously
+- Previous idempotency key included `event_type`, causing different keys for each webhook
+- Now idempotency is based on `pr_id + repository + source_commit_id` only
+- Duplicate webhooks are now correctly detected and ignored
+
+**Issue 3: AI False Positives**
+- AI was flagging "HardcodedValues" for standard Terraform default tag values
+- Added explicit guidance to avoid false positives for common patterns
+- Prompts now clarify: default tags, provider blocks, and naming are NOT issues
+- Only actual secrets (API keys, passwords, tokens) should be flagged as hardcoded
+
+**Files Changed:**
+- `src/handlers/pr_webhook.py` - Removed inline comment posting (single comment only)
+- `src/models/reliability.py` - Idempotency key excludes event_type
+- `src/prompts/factory.py` - Added false positive guidance
+- `src/utils/config.py` - Version updated to 2.6.12
+
+---
+
+## [2.6.11] - 2025-12-04
+
+### Fixed - Reasoning Model (gpt-5/o1/o3) Response Handling
+
+**Critical: AI Returns Empty Content with response_format: json_object**
+- Reasoning models (gpt-5, o1, o3) use internal "reasoning tokens" for thinking
+- When using `response_format: {"type": "json_object"}`, these models may return empty `message.content`
+- The completion_tokens count includes reasoning tokens, but actual output is minimal/empty
+- Error: `AI returned invalid JSON: Expecting value: line 1 column 1 (char 0)`
+
+**Fix:**
+- Added reasoning model detection (gpt-5, o1, o3, o1-preview, o1-mini, o3-mini patterns)
+- Removed `response_format: json_object` for reasoning models (causes empty responses)
+- Enhanced system prompt for reasoning models with explicit JSON structure instructions
+- Added JSON extraction from freeform text (handles markdown code blocks, etc.)
+- Added refusal detection for reasoning model responses
+- Added empty content handling with informative error messages
+- Added debug logging for response content preview
+
+**Files Changed:**
+- `src/services/ai_client.py` - Major updates for reasoning model handling
+- `src/utils/config.py` - Version updated to 2.6.11
+
+**New Methods:**
+```python
+def _is_reasoning_model(self, model: str) -> bool:
+    """Check if the model is a reasoning model (gpt-5, o1, o3 family)."""
+
+def _extract_json_from_text(self, text: str) -> Optional[Dict]:
+    """Extract JSON from freeform text response (code blocks, braces)."""
+```
+
+**Symptoms Before Fix:**
+```
+ai_response_invalid_json: Expecting value: line 1 column 1 (char 0)
+# Despite completion_tokens: 4000, content was empty
+```
+
+---
+
+## [2.6.10] - 2025-12-04
+
+### Fixed - Azure OpenAI gpt-5/o1 Model Parameter Restrictions
+
+**Critical: Azure OpenAI API BadRequestError with temperature Parameter**
+- Newer Azure OpenAI models (gpt-5, o1) don't support custom temperature values
+- API returned: `Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported.`
+
+**Fix:**
+- Removed `temperature` parameter for Azure OpenAI deployments (uses model default of 1)
+- Retained `temperature` for direct OpenAI API (backward compatibility)
+- Combined with v2.6.9 `max_completion_tokens` fix
+
+**Files Changed:**
+- `src/services/ai_client.py` - Conditional parameter selection for Azure vs OpenAI
+- `src/utils/config.py` - Version updated to 2.6.10
+
+**Code Change:**
+```python
+# Azure OpenAI newer models have different parameter requirements
+if self.use_azure:
+    # Use max_completion_tokens (newer models don't support max_tokens)
+    request_params["max_completion_tokens"] = max_tokens
+    # Note: temperature not set for Azure - newer models only support default (1)
+else:
+    # Direct OpenAI API - full parameter support
+    request_params["max_tokens"] = max_tokens
+    request_params["temperature"] = DEFAULT_TEMPERATURE
+```
+
+**Symptoms Before Fix:**
+```
+BadRequestError: Unsupported value: 'temperature' does not support 0.2 with this model
+```
+
+---
+
+## [2.6.9] - 2025-12-04
+
+### Fixed - Azure OpenAI max_completion_tokens Parameter
+
+**Critical: Azure OpenAI API BadRequestError with gpt-5 Model**
+- Newer Azure OpenAI models (gpt-5, o1, etc.) require `max_completion_tokens` instead of `max_tokens`
+- API returned: `Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.`
+
+**Fix:**
+- Modified `ai_client.py` to use `max_completion_tokens` for Azure OpenAI deployments
+- Retained `max_tokens` for direct OpenAI API (backward compatibility)
+
+**Symptoms Before Fix:**
+```
+BadRequestError: Unsupported parameter: 'max_tokens' is not supported with this model
+```
+
+---
+
+## [2.6.8] - 2025-12-04
+
+### Fixed - Diff API URL Missing project_id
+
+**Critical: Diff API Still Returning 404 Errors**
+- v2.6.7 fixed version specs (`refs/heads/main` → `GBmain`) but diffs still returned 404
+- Root cause: URL was missing `project_id` in the path
+- Azure DevOps API requires: `/{org}/{project}/_apis/git/repositories/{repo}/...`
+- We were using: `/{org}/_apis/git/repositories/{repo}/...` (missing project!)
+
+**Fix:**
+- Added `project_id` parameter to `get_file_diff()` method signature
+- Updated URL to include project_id: `{base_url}/{project_id}/_apis/...`
+- Updated `_get_file_content()` similarly for consistency
+- Updated caller in `pr_webhook.py` to pass `project_id=pr_event.project_id`
+
+**Additional Fix: Comprehensive str enum handling**
+- Changed all `.value` accesses to `str()` for Pydantic str enum compatibility
+- Fixed in: `pr_webhook.py`, `context_manager.py`, `prompts/factory.py`
+
+**Files Changed:**
+- `src/services/azure_devops.py` - Added project_id to diff API URLs
+- `src/handlers/pr_webhook.py` - Pass project_id, use str() for enums
+- `src/services/context_manager.py` - Use str() for enum logging
+- `src/prompts/factory.py` - Use str() for category logging
+
+**Symptoms Before Fix:**
+```
+error: 404, message='Not Found', url='https://dev.azure.com/org/_apis/git/repositories/...'
+AttributeError: 'str' object has no attribute 'value'
+```
+
+**Expected After Fix:**
+```
+url='https://dev.azure.com/org/project/_apis/git/repositories/...'
+```
+
+---
+
+## [2.6.7] - 2025-12-04
+
+### Fixed - Diff API Version Specs and Enum Handling
+
+**Critical: Diff API Returning 404 Errors**
+- Azure DevOps diff API was returning 404 for all file diff requests
+- Root cause: Branch refs were passed as-is (`refs/heads/main`) instead of version specs (`GBmain`)
+- Azure DevOps API requires specific version spec prefixes:
+  - `GB` for branches (e.g., `GBmain`, `GBfeature/xyz`)
+  - `GC` for commits (e.g., `GC1234567890abcdef`)
+  - `GT` for tags (e.g., `GTv1.0.0`)
+
+**Fix:**
+- Added `_convert_to_version_spec()` method in `azure_devops.py`
+- Converts `refs/heads/branch-name` → `GBbranch-name`
+- Converts commit SHAs → `GC<sha>`
+- Updated `get_file_diff()` to use the conversion
+
+**Secondary Fix: AttributeError with str enum**
+- `FileCategory` is a `str` enum which can sometimes behave as a string
+- Code was accessing `.value` which fails if already a string
+- Changed to `str(file_type)` which works in both cases
+
+**Files Changed:**
+- `src/services/azure_devops.py` - Added version spec conversion
+- `src/handlers/pr_webhook.py` - Fixed str enum access
+
+**Symptoms Before Fix:**
+```
+diff_fetch_failed: 404, message='Not Found'
+AttributeError: 'str' object has no attribute 'value'
+```
+
+**Expected After Fix:**
+```
+devops_get_file_diff: base_version=GBmain, target_version=GBfeature/xyz
+```
+
+---
+
+## [2.6.6] - 2025-12-04
+
+### Fixed - Azure DevOps File Fetching Bug
+
+**Critical: PR Files Not Being Fetched**
+- The PR webhook handler was expecting `pr_details.get('files', [])` to contain file list
+- However, Azure DevOps `/pullRequests/{id}` endpoint does NOT include files in its response
+- Files must be fetched separately via `/pullRequests/{id}/iterations/{id}/changes` endpoint
+- Result: All PRs showed `file_count: 0` and `no_files_to_review` even when files existed
+
+**Root Cause:**
+- `get_pull_request_details()` in `azure_devops.py` correctly fetches PR metadata
+- But PR details API doesn't return files - they require a separate API call
+- `get_pull_request_files()` method existed but was never called in the handler
+
+**Fix:**
+- Modified `_fetch_changed_files()` in `pr_webhook.py` to call `get_pull_request_files()`
+- Now fetches file list from iterations/changes API before processing diffs
+- Converts Azure DevOps `changeEntries` format to expected file format
+
+**Files Changed:**
+- `src/handlers/pr_webhook.py` - Call `get_pull_request_files()` to fetch file list
+
+**Symptoms Before Fix:**
+```
+pr_details_fetched: title="...", file_count=0
+no_files_to_review
+```
+
+**Expected After Fix:**
+```
+files_fetched_from_iterations: file_count=N, pr_id=123
+changed_files_classified: total_files=N
+```
+
+---
+
 ## [2.6.5] - 2025-12-03
 
 ### Changed - Consolidated Constants & Type Hints

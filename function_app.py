@@ -684,7 +684,7 @@ def _validate_webhook_secret(provided_secret: Optional[str]) -> bool:
 
     try:
         secret_manager = get_secret_manager()
-        expected_secret = secret_manager.get_secret("WEBHOOK_SECRET")
+        expected_secret = secret_manager.get_secret("WEBHOOK-SECRET")
 
         # Use constant-time comparison to prevent timing attacks
         # hmac.compare_digest() ensures comparison takes same time

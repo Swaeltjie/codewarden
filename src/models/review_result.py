@@ -52,7 +52,7 @@ class ReviewIssue(BaseModel):
     """
     Represents a single issue found during code review.
     """
-    
+
     severity: IssueSeverity = Field(..., description="Issue severity level")
     file_path: str = Field(..., max_length=2000, description="Path to file with issue")
     line_number: int = Field(ge=0, le=1000000, description="Line number (0 if file-level)")
@@ -61,6 +61,7 @@ class ReviewIssue(BaseModel):
     suggestion: Optional[str] = Field(None, max_length=5000, description="Suggested fix or remediation")
     code_snippet: Optional[str] = Field(None, max_length=10000, description="Relevant code snippet")
     suggested_fix: Optional[SuggestedFix] = Field(None, description="Detailed fix with before/after code")
+    agent_type: Optional[str] = Field(None, max_length=50, description="Agent that found this issue (v2.7.0)")
 
     @field_validator('message', 'suggestion', 'issue_type')
     @classmethod

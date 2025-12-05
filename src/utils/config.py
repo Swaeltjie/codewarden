@@ -4,7 +4,7 @@ Configuration Management
 
 Handles application settings and Azure Key Vault integration for secrets.
 
-Version: 2.6.5 - Consolidated constants
+Version: 2.6.23 - GPT-5 parameter compatibility fixes
 """
 from pydantic_settings import BaseSettings
 from azure.identity import DefaultAzureCredential
@@ -22,7 +22,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Application version - single source of truth
-__version__ = "2.6.5"
+__version__ = "2.6.23"
 
 
 class Settings(BaseSettings):

@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.6.5 - Consolidated all constants
+Version: 2.6.23 - GPT-5 parameter compatibility fixes
 """
 
 # =============================================================================
@@ -310,7 +310,8 @@ HEALTH_SCORE_RECURRING_PENALTY = 30
 DEFAULT_TEMPERATURE = 0.2
 
 # Maximum tokens for AI completion responses
-DEFAULT_MAX_TOKENS = 4096
+# GPT-5 supports up to 128K output tokens - use maximum capacity
+DEFAULT_MAX_TOKENS = 128000
 
 # =============================================================================
 # LOGGING

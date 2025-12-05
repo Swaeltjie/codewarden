@@ -4,7 +4,7 @@ Reliability Models
 
 Data models for idempotency tracking and response caching.
 
-Version: 2.5.14
+Version: 2.6.12 - Idempotency key excludes event_type to prevent duplicate reviews
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
@@ -58,20 +58,24 @@ class IdempotencyEntity(BaseModel):
         """
         Generate deterministic request ID.
 
+        v2.6.12: Removed event_type from hash to prevent duplicate reviews
+        when both "created" and "updated" webhooks fire simultaneously.
+        Idempotency is now based on pr_id + repository + source_commit_id.
+
         Args:
             pr_id: Pull request ID
             repository: Repository name
-            event_type: Webhook event type
-            source_commit_id: Latest commit ID (optional, makes ID more specific)
+            event_type: Webhook event type (kept for logging, not used in hash)
+            source_commit_id: Latest commit ID (required for proper deduplication)
 
         Returns:
             Unique request ID string
         """
         # Create stable hash of request parameters
+        # v2.6.12: Exclude event_type to deduplicate across created/updated webhooks
         parts = [
             str(pr_id),
-            repository,
-            event_type
+            repository
         ]
         if source_commit_id:
             parts.append(source_commit_id)

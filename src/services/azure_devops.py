@@ -14,12 +14,13 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.6.5 - Type hints for inner functions
+Version: 2.6.20 - Fixed diffs API: use project name (not UUID) + plain branch names
 """
 import aiohttp
 import asyncio
 from typing import Dict, List, Optional
 from functools import lru_cache
+from urllib.parse import quote
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -345,6 +346,47 @@ class AzureDevOpsClient:
 
         return data.get('changeEntries', [])
     
+    def _convert_to_version_spec(self, ref_or_commit: str) -> str:
+        """
+        Convert a git ref or commit to Azure DevOps version spec format.
+
+        NOTE: This format is for URL PATH parameters (like items?version=GBmain),
+        NOT for QUERY parameters in the diffs/commits API.
+
+        The diffs/commits API accepts full refs (refs/heads/main) directly.
+
+        Azure DevOps version spec prefixes:
+        - GB for branches (e.g., GBmain, GBfeature/xyz)
+        - GC for commits (e.g., GC1234567890abcdef)
+        - GT for tags (e.g., GTv1.0.0)
+
+        Args:
+            ref_or_commit: Branch ref (refs/heads/...) or commit SHA
+
+        Returns:
+            Version spec string for Azure DevOps API (path parameters only)
+        """
+        # Handle branch refs - strip refs/heads/ prefix and add GB
+        if ref_or_commit.startswith('refs/heads/'):
+            branch_name = ref_or_commit[len('refs/heads/'):]
+            return f"GB{branch_name}"
+
+        # Handle tag refs - strip refs/tags/ prefix and add GT
+        if ref_or_commit.startswith('refs/tags/'):
+            tag_name = ref_or_commit[len('refs/tags/'):]
+            return f"GT{tag_name}"
+
+        # Check if it's a commit SHA (40 hex chars)
+        if len(ref_or_commit) == 40 and all(c in '0123456789abcdefABCDEF' for c in ref_or_commit):
+            return f"GC{ref_or_commit}"
+
+        # If already a version spec (starts with G), return as-is
+        if ref_or_commit.startswith('G') and len(ref_or_commit) > 2:
+            return ref_or_commit
+
+        # Assume it's a branch name without refs/heads/ prefix
+        return f"GB{ref_or_commit}"
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -353,6 +395,7 @@ class AzureDevOpsClient:
     )
     async def get_file_diff(
         self,
+        project_id: str,
         repository_id: str,
         file_path: str,
         source_commit: str,
@@ -364,26 +407,44 @@ class AzureDevOpsClient:
         Retries up to 3 times with exponential backoff on transient errors.
 
         Args:
+            project_id: Project UUID or name
             repository_id: Repository UUID
             file_path: Path to file (e.g., /main.tf)
-            source_commit: Source commit SHA (feature branch)
-            target_commit: Target commit SHA (main branch)
+            source_commit: Source branch/commit (feature branch ref or SHA)
+            target_commit: Target branch/commit (main branch ref or SHA)
 
         Returns:
             Unified diff string
         """
-        # Azure DevOps API for diffs - get detailed diff with diffContentType
+        # v2.6.20: Azure DevOps diffs/commits API requires:
+        # 1. Project NAME (not UUID) in URL path, URL-encoded for spaces
+        # 2. Plain branch names without refs/heads/ prefix: main, feature/xyz
+        # See: https://learn.microsoft.com/en-us/rest/api/azure/devops/git/diffs/get
+
+        # Strip refs/heads/ prefix from branch refs to get plain branch names
+        def strip_refs_prefix(ref: str) -> str:
+            if ref.startswith('refs/heads/'):
+                return ref[len('refs/heads/'):]
+            return ref
+
+        base_version = strip_refs_prefix(target_commit)
+        target_version = strip_refs_prefix(source_commit)
+
+        # URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        encoded_project = quote(project_id, safe='')
+
         url = (
-            f"{self.base_url}/_apis/git/repositories/{repository_id}/diffs/commits"
-            f"?baseVersion={target_commit}&targetVersion={source_commit}"
+            f"{self.base_url}/{encoded_project}/_apis/git/repositories/{repository_id}/diffs/commits"
+            f"?baseVersion={base_version}&targetVersion={target_version}"
             f"&diffContentType=unified&api-version={self.api_version}"
         )
 
         logger.debug(
             "devops_get_file_diff",
             file_path=file_path,
-            source=source_commit[:8],
-            target=target_commit[:8]
+            base_version=base_version,
+            target_version=target_version,
+            url=url
         )
 
         try:
@@ -397,7 +458,45 @@ class AzureDevOpsClient:
                 item_path = change.get('item', {}).get('path', '')
 
                 if item_path == file_path or item_path.endswith(file_path):
-                    # Convert Azure DevOps diff to unified diff format
+                    # v2.6.21: Check if API returned actual diff content (blocks)
+                    # If not, fetch file content directly and generate diff
+                    if 'blocks' not in change:
+                        change_type = change.get('changeType', 'edit')
+                        logger.info(
+                            "diff_blocks_missing_fetching_content",
+                            file_path=file_path,
+                            change_type=change_type
+                        )
+
+                        # Fetch actual file content based on change type
+                        if change_type in ['add', 'add, edit']:
+                            # New file - fetch from source branch (feature branch)
+                            content = await self._get_file_content(
+                                project_id, repository_id, file_path, target_version
+                            )
+                            if content:
+                                return self._generate_add_diff(file_path, content)
+
+                        elif change_type == 'delete':
+                            # Deleted file - fetch from target branch (main)
+                            content = await self._get_file_content(
+                                project_id, repository_id, file_path, base_version
+                            )
+                            if content:
+                                return self._generate_delete_diff(file_path, content)
+
+                        else:
+                            # Modified file - fetch both versions and diff
+                            old_content = await self._get_file_content(
+                                project_id, repository_id, file_path, base_version
+                            )
+                            new_content = await self._get_file_content(
+                                project_id, repository_id, file_path, target_version
+                            )
+                            if old_content is not None and new_content is not None:
+                                return self._generate_edit_diff(file_path, old_content, new_content)
+
+                    # API returned blocks - use standard formatter
                     return self._format_as_unified_diff(change, file_path, repository_id, source_commit, target_commit)
 
             logger.warning("file_not_found_in_diff", file_path=file_path)
@@ -413,24 +512,32 @@ class AzureDevOpsClient:
 
     async def _get_file_content(
         self,
+        project_id: str,
         repository_id: str,
         file_path: str,
-        commit_sha: str
+        version_ref: str
     ) -> Optional[str]:
         """
-        Get file content at a specific commit.
+        Get file content at a specific version (branch or commit).
 
         Args:
+            project_id: Project UUID or name
             repository_id: Repository UUID
             file_path: Path to file
-            commit_sha: Commit SHA
+            version_ref: Branch name (e.g., "main") or commit SHA (40-char hex)
 
         Returns:
             File content as string, or None if file doesn't exist
         """
+        # v2.6.22: Use versionType=branch for branch names, commit for SHAs
+        # Branch names: main, feature/xyz (no refs/heads/ prefix)
+        # Commit SHAs: 40-char hex strings
+        is_commit_sha = len(version_ref) == 40 and all(c in '0123456789abcdef' for c in version_ref.lower())
+        version_type = "commit" if is_commit_sha else "branch"
+
         url = (
-            f"{self.base_url}/_apis/git/repositories/{repository_id}/items"
-            f"?path={file_path}&versionType=commit&version={commit_sha}"
+            f"{self.base_url}/{project_id}/_apis/git/repositories/{repository_id}/items"
+            f"?path={file_path}&versionType={version_type}&version={version_ref}"
             f"&api-version={self.api_version}"
         )
 
@@ -446,10 +553,108 @@ class AzureDevOpsClient:
             logger.warning(
                 "file_content_fetch_failed",
                 file_path=file_path,
-                commit=commit_sha[:8],
+                version_ref=version_ref[:20],
                 error=str(e)
             )
             return None
+
+    def _generate_add_diff(self, file_path: str, content: str) -> str:
+        """
+        Generate unified diff for a newly added file.
+
+        Shows all lines as additions (+).
+
+        Args:
+            file_path: Path to the file
+            content: Full file content
+
+        Returns:
+            Unified diff string
+        """
+        lines = content.splitlines()
+        line_count = len(lines)
+
+        diff_lines = [
+            f"diff --git a{file_path} b{file_path}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b{file_path}",
+            f"@@ -0,0 +1,{line_count} @@"
+        ]
+
+        # Add all lines as additions
+        for line in lines:
+            diff_lines.append(f"+{line}")
+
+        return "\n".join(diff_lines)
+
+    def _generate_delete_diff(self, file_path: str, content: str) -> str:
+        """
+        Generate unified diff for a deleted file.
+
+        Shows all lines as deletions (-).
+
+        Args:
+            file_path: Path to the file
+            content: Full file content before deletion
+
+        Returns:
+            Unified diff string
+        """
+        lines = content.splitlines()
+        line_count = len(lines)
+
+        diff_lines = [
+            f"diff --git a{file_path} b{file_path}",
+            "deleted file mode 100644",
+            f"--- a{file_path}",
+            "+++ /dev/null",
+            f"@@ -1,{line_count} +0,0 @@"
+        ]
+
+        # Add all lines as deletions
+        for line in lines:
+            diff_lines.append(f"-{line}")
+
+        return "\n".join(diff_lines)
+
+    def _generate_edit_diff(self, file_path: str, old_content: str, new_content: str) -> str:
+        """
+        Generate unified diff for a modified file using difflib.
+
+        Args:
+            file_path: Path to the file
+            old_content: Original file content
+            new_content: Modified file content
+
+        Returns:
+            Unified diff string
+        """
+        import difflib
+
+        old_lines = old_content.splitlines(keepends=True)
+        new_lines = new_content.splitlines(keepends=True)
+
+        # Generate unified diff using difflib
+        diff = difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=f"a{file_path}",
+            tofile=f"b{file_path}",
+            lineterm=""
+        )
+
+        # Convert to list and join
+        diff_lines = list(diff)
+
+        if diff_lines:
+            # Add git diff header for consistency
+            result = [f"diff --git a{file_path} b{file_path}"]
+            result.extend(diff_lines)
+            return "\n".join(result)
+
+        # No differences found
+        return ""
 
     def _format_as_unified_diff(
         self,

@@ -186,28 +186,40 @@ class AIClient:
             # Define the API call function for circuit breaker
             async def make_api_call() -> Any:
                 # Add per-request timeout to prevent hanging
+                # Use max_completion_tokens for newer models (gpt-4o, gpt-5, o1, etc.)
+                # These models don't support the legacy max_tokens parameter
+
+                # Build API parameters - some models (gpt-5, o1) don't support
+                # custom temperature values, so we only set it for compatible models
+                api_params: Dict[str, Any] = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an expert Infrastructure as Code and Configuration reviewer. "
+                                "You specialize in Terraform, Ansible, Azure Pipelines, and JSON configurations. "
+                                "Focus on security, best practices, and potential issues. "
+                                "Always respond with valid JSON."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    "max_completion_tokens": max_tokens,
+                    "response_format": {"type": "json_object"}  # Enforce JSON response
+                }
+
+                # Only set temperature for models that support it
+                # GPT-5 and o1 models only support default temperature (1)
+                model_lower = model.lower()
+                if not any(x in model_lower for x in ['gpt-5', 'o1-', 'o1_']):
+                    api_params["temperature"] = DEFAULT_TEMPERATURE
+
                 return await asyncio.wait_for(
-                    self.client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "You are an expert Infrastructure as Code and Configuration reviewer. "
-                                    "You specialize in Terraform, Ansible, Azure Pipelines, and JSON configurations. "
-                                    "Focus on security, best practices, and potential issues. "
-                                    "Always respond with valid JSON."
-                                )
-                            },
-                            {
-                                "role": "user",
-                                "content": prompt
-                            }
-                        ],
-                        temperature=DEFAULT_TEMPERATURE,
-                        max_tokens=max_tokens,
-                        response_format={"type": "json_object"}  # Enforce JSON response
-                    ),
+                    self.client.chat.completions.create(**api_params),
                     timeout=float(AI_REQUEST_TIMEOUT)
                 )
 

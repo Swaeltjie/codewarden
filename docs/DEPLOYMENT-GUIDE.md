@@ -50,8 +50,9 @@ AZURE_STORAGE_ACCOUNT_NAME=your-storage-account
 AZURE_DEVOPS_ORG=your-org
 
 # AI Configuration
-OPENAI_MODEL=gpt-4o
-OPENAI_MAX_TOKENS=4000
+OPENAI_MODEL=gpt-4o                  # Fallback model
+AZURE_AI_DEPLOYMENT=gpt-5            # Recommended: GPT-5 for better accuracy
+OPENAI_MAX_TOKENS=128000             # GPT-5 supports up to 128K output tokens
 
 # Application
 LOG_LEVEL=DEBUG
@@ -122,16 +123,16 @@ az storage account create \
 az storage table create --name feedback --account-name $STORAGE_ACCOUNT
 az storage table create --name reviewhistory --account-name $STORAGE_ACCOUNT
 
-# Create Function App (Python 3.12, Consumption plan)
+# Create Function App (Python 3.12, Flex Consumption plan - recommended)
+# Note: Linux Consumption plan reaches EOL September 30, 2028
 az functionapp create \
   --resource-group $RESOURCE_GROUP \
-  --consumption-plan-location $LOCATION \
-  --runtime python \
-  --runtime-version 3.12 \
-  --functions-version 4 \
   --name $FUNCTION_APP \
   --storage-account $STORAGE_ACCOUNT \
-  --os-type Linux
+  --flexconsumption-location $LOCATION \
+  --runtime python \
+  --runtime-version 3.12 \
+  --functions-version 4
 
 # Create Key Vault
 az keyvault create \
@@ -154,11 +155,12 @@ PRINCIPAL_ID=$(az functionapp identity show \
   --resource-group $RESOURCE_GROUP \
   --query principalId -o tsv)
 
-# Grant Key Vault access
-az keyvault set-policy \
-  --name $KEYVAULT_NAME \
-  --object-id $PRINCIPAL_ID \
-  --secret-permissions get list
+# Grant Key Vault access (using RBAC - default for new Key Vaults)
+KEYVAULT_ID=$(az keyvault show --name $KEYVAULT_NAME --resource-group $RESOURCE_GROUP --query id -o tsv)
+az role assignment create \
+  --assignee $PRINCIPAL_ID \
+  --role "Key Vault Secrets User" \
+  --scope $KEYVAULT_ID
 
 # Grant Table Storage access
 az role assignment create \
@@ -183,6 +185,8 @@ az keyvault secret set \
   --value "$(openssl rand -hex 32)"
 ```
 
+**Important:** Key Vault secret names must use hyphens (`-`), not underscores (`_`). The code references secrets using hyphenated names (e.g., `WEBHOOK-SECRET`, `OPENAI-API-KEY`).
+
 ### 4. Configure Function App Settings
 
 ```bash
@@ -197,8 +201,9 @@ az functionapp config appsettings set \
     KEYVAULT_URL=$KEYVAULT_URI \
     AZURE_STORAGE_ACCOUNT_NAME=$STORAGE_ACCOUNT \
     AZURE_DEVOPS_ORG=your-org \
+    AZURE_AI_DEPLOYMENT=gpt-5 \
     OPENAI_MODEL=gpt-4o \
-    OPENAI_MAX_TOKENS=4000 \
+    OPENAI_MAX_TOKENS=128000 \
     LOG_LEVEL=INFO \
     ENVIRONMENT=production
 ```
@@ -258,14 +263,17 @@ Follow the detailed setup in [AZURE-DEVOPS-MANAGED-IDENTITY.md](AZURE-DEVOPS-MAN
 3. Select "Web Hooks"
 4. Configure:
    - **Trigger:** Pull request created OR updated
+   - **Repository:** Select specific repository (optional - for testing)
    - **URL:** Your Function URL (from step 6 above)
-   - **HTTP Headers:**
+   - **HTTP Headers:** (one per line, no spaces around colon)
      ```
-     x-webhook-secret: <secret-from-keyvault>
-     Content-Type: application/json
+     x-webhook-secret:<secret-from-keyvault>
      ```
+   - **Basic auth username/password:** Leave empty (not used)
 5. Test the connection
 6. Save
+
+**Note:** Do NOT add `Content-Type` header - Azure DevOps sets this automatically. Adding it causes "Misused header name" errors.
 
 **Security Best Practices:**
 - Use HTTPS only (required)
@@ -400,17 +408,16 @@ jobs:
 1. ✅ Use existing Datadog (vs Application Insights: $2-5/month saved)
 2. ✅ Use Table Storage (vs Cosmos DB: $1-2/month saved)
 3. ✅ Use diff-only analysis (88% token savings)
-4. ✅ Use Consumption plan (pay per execution)
+4. ✅ Use Flex Consumption plan (pay per execution)
 
 ### Hosting Plan Options (2025)
 
 | Plan | Best For | Cold Start | Cost |
 |------|----------|------------|------|
-| **Consumption** | Dev/test, low traffic | 5-15s | $0.10/month |
-| **Flex Consumption** (New) | Better scaling, private networking | Reduced | Varies |
-| **Premium EP1** | Production, APIs | None | ~$150/month |
+| **Flex Consumption** (Recommended) | Dev/test/production, all workloads | ~1s | $0.10/month |
+| **Premium EP1** | High-traffic production, always-warm | None | ~$150/month |
 
-**Note:** Consider Flex Consumption Plan for production workloads requiring better scaling and private networking without Premium pricing.
+**Note:** Linux Consumption plan reaches EOL September 30, 2028. Use Flex Consumption for all new deployments.
 
 ---
 
@@ -421,14 +428,45 @@ jobs:
 
 ### Key Vault Access Denied
 ```bash
-# Verify managed identity has access
-az keyvault show --name $KEYVAULT_NAME --query properties.accessPolicies
+# Verify managed identity has role assignment (RBAC)
+az role assignment list --assignee $PRINCIPAL_ID --scope $(az keyvault show --name $KEYVAULT_NAME --resource-group $RESOURCE_GROUP --query id -o tsv)
 
-# Re-grant access
-az keyvault set-policy \
-  --name $KEYVAULT_NAME \
-  --object-id $PRINCIPAL_ID \
-  --secret-permissions get list
+# Re-grant access using RBAC
+KEYVAULT_ID=$(az keyvault show --name $KEYVAULT_NAME --resource-group $RESOURCE_GROUP --query id -o tsv)
+az role assignment create \
+  --assignee $PRINCIPAL_ID \
+  --role "Key Vault Secrets User" \
+  --scope $KEYVAULT_ID
+```
+
+### Functions Not Loading (0 functions loaded)
+**Cause:** Missing required environment variables cause a Pydantic validation error at module import time, preventing function discovery.
+
+**Required settings:**
+- `KEYVAULT_URL` - Key Vault URI
+- `AZURE_STORAGE_ACCOUNT_NAME` - Storage account name
+- `AZURE_DEVOPS_ORG` - Azure DevOps organization name
+
+**Diagnosis:** Check Application Insights traces for "0 functions loaded" or "0 functions found (Custom)".
+
+**Solution:** Ensure all required settings are configured:
+```bash
+az functionapp config appsettings list --name $FUNCTION_APP --resource-group $RESOURCE_GROUP -o table
+```
+
+### PR Shows "No Files to Review" When Files Exist
+**Symptoms:**
+```
+pr_details_fetched: title="...", file_count=0
+no_files_to_review
+```
+
+**Cause:** This was a bug fixed in v2.6.6. The Azure DevOps PR details API (`/pullRequests/{id}`) does NOT include file list in its response. Files must be fetched separately via iterations/changes API.
+
+**Solution:** Upgrade to v2.6.6 or later. After the fix, you should see:
+```
+files_fetched_from_iterations: file_count=N, pr_id=123
+changed_files_classified: total_files=N
 ```
 
 ### Function Timeout

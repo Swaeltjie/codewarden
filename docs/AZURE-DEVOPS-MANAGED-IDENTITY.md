@@ -222,6 +222,32 @@ az login
 
 ## Troubleshooting
 
+### Error: 401 Unauthorized from Azure DevOps API
+
+**Symptoms:**
+```
+http.status_code: 401
+http.status_msg: Unauthorized
+error: "Authentication failed - check Managed Identity permissions"
+error_type: DevOpsAuthError
+```
+
+The function successfully obtained an Azure AD token, but Azure DevOps rejected it.
+
+**Cause:** The Managed Identity has NOT been added to the Azure DevOps organization.
+
+**Solution:**
+1. Go to **Azure DevOps** → Your Org → **Organization Settings** → **Users**
+2. Click **Add users**
+3. Search using the **Object ID** (GUID): `1a2849ef-d8b2-4392-b982-6997a7b1db3d` (your MI's Object ID)
+4. Select the identity and assign **Basic** access level
+5. Go to **Project Settings** → **Permissions** and grant:
+   - Code: **Reader**
+   - Pull Request Threads: **Contributor**
+6. Retry the Service Hook test
+
+**Important:** You must search by Object ID, not by Function App name. The Object ID can be found in Azure Portal → Function App → Identity → System assigned.
+
 ### Error: "Authentication failed"
 
 **Symptoms:**

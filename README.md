@@ -90,7 +90,7 @@ AI-powered Pull Request reviewer for Azure DevOps supporting Terraform, Ansible,
 |-----------|------------|---------|
 | **Runtime** | Azure Functions (Python 3.12) | Serverless compute |
 | **API Gateway** | Azure Functions HTTP Trigger | Webhook endpoint |
-| **AI/LLM** | OpenAI GPT-4 or Azure AI Foundry | Code review analysis |
+| **AI/LLM** | Azure AI Foundry GPT-5 (recommended) or OpenAI | Code review analysis |
 | **Storage** | Azure Table Storage | Feedback & history |
 | **Secrets** | Azure Key Vault | Secure credential storage |
 | **Monitoring** | Datadog (your existing infrastructure) | Logging, metrics & APM |
