@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.6.33 - Added statistics query validation constants
+Version: 2.7.0 - Added feedback learning constants for few-shot learning
 """
 
 # =============================================================================

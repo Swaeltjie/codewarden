@@ -5,6 +5,102 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2025-12-08
+
+### Added - Few-Shot Learning from Feedback
+
+**Major Feature: AI learns from team feedback to improve review quality**
+
+This release implements a lightweight feedback learning loop that adapts AI reviews based on team behavior - no model retraining required. The system uses prompt-based reinforcement with few-shot examples.
+
+**Architecture:**
+```
+Feedback Data → Aggregate Stats → Few-Shot Examples → Dynamic Prompts → Improved Reviews
+```
+
+**New Models (src/models/feedback.py):**
+
+1. **FeedbackExample** - Stores accepted suggestions for few-shot learning
+   - `issue_type`: Type of issue that was flagged
+   - `code_snippet`: Code that was flagged (truncated, sanitized)
+   - `suggestion`: AI suggestion that was accepted
+   - `file_path`: File context for the example
+   - `severity`: Issue severity level
+   - `acceptance_count`: Times similar suggestions were accepted
+
+2. **RejectionPattern** - Tracks patterns team consistently rejects
+   - `issue_type`: Type of issue rejected
+   - `reason`: Inferred reason for rejection
+   - `rejection_count`: Number of rejections
+   - `sample_context`: Sample file/path context
+
+3. **LearningContext** - Enhanced learning context combining all data
+   - Aggregate statistics (existing)
+   - Few-shot examples by issue type (NEW)
+   - Rejection patterns to avoid (NEW)
+   - Backward compatibility via `to_legacy_dict()`
+
+**New FeedbackTracker Methods (src/services/feedback_tracker.py):**
+
+1. `_extract_accepted_examples()` - Extracts few-shot examples from positive feedback
+   - Groups by issue type
+   - Selects most recent examples
+   - Limits to `MAX_EXAMPLES_PER_ISSUE_TYPE` (3) per type
+
+2. `_analyze_rejection_patterns()` - Identifies patterns team rejects
+   - Counts rejections by issue type
+   - Requires `MIN_REJECTIONS_FOR_PATTERN` (3) to be significant
+   - Returns top `MAX_REJECTION_PATTERNS` (5) patterns
+
+3. `get_enhanced_learning_context()` - Returns full LearningContext
+   - Combines statistics, examples, and patterns
+   - Time-windowed analysis (configurable days)
+   - Returns LearningContext model
+
+**New PromptFactory Methods (src/prompts/factory.py):**
+
+1. `_build_few_shot_examples_section()` - Formats examples for prompt injection
+   - Sanitizes all user-controlled content
+   - Limits total examples to `MAX_TOTAL_EXAMPLES_IN_PROMPT` (10)
+
+2. `_build_rejection_patterns_section()` - Formats rejection patterns
+   - Warns AI to avoid flagging these patterns
+   - Unless critical severity with clear security implications
+
+3. `build_enhanced_learning_section()` - Combines all learning sections
+   - Handles both LearningContext model and legacy dict
+   - Graceful fallback for insufficient data
+
+**New Constants (src/utils/constants.py):**
+
+```python
+# Feedback Learning Settings (v2.7.0)
+MAX_EXAMPLES_PER_ISSUE_TYPE = 3       # Examples per issue type
+MAX_TOTAL_EXAMPLES_IN_PROMPT = 10     # Total examples in prompt
+MAX_EXAMPLE_CODE_SNIPPET_LENGTH = 500 # Code snippet max chars
+MAX_EXAMPLE_SUGGESTION_LENGTH = 300   # Suggestion max chars
+LEARNING_CONTEXT_DAYS = 90            # Days to analyze
+MIN_EXAMPLE_QUALITY_RATE = 0.8        # Min acceptance rate
+MAX_REJECTION_PATTERNS = 5            # Patterns to include
+MIN_REJECTIONS_FOR_PATTERN = 3        # Min rejections needed
+```
+
+**Files Changed:**
+- `src/models/feedback.py` - Added FeedbackExample, RejectionPattern, LearningContext
+- `src/services/feedback_tracker.py` - Added extraction and analysis methods
+- `src/prompts/factory.py` - Added prompt injection methods
+- `src/utils/constants.py` - Added feedback learning constants
+- `src/utils/config.py` - Version bump to 2.7.0
+
+**Why This Approach:**
+- Lightweight: No model fine-tuning or retraining
+- Fast: Examples extracted from existing feedback data
+- Adaptive: Improves with each accepted/rejected suggestion
+- Reversible: Just modify prompts, no model changes
+- Based on 2025 best practices from GitHub Copilot, SonarQube patterns
+
+---
+
 ## [2.6.37] - 2025-12-08
 
 ### Fixed - Third Round Bug Fixes from Code Review
