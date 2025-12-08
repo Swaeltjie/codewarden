@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.6.34 - Added defensive logging for cache statistics inconsistency
+Version: 2.6.36 - Fixed path validation for Azure DevOps root-relative paths
 """
 import asyncio
 import json
@@ -184,8 +184,11 @@ class ResponseCache:
                 if '' in parts:
                     return False
 
-                # Check if normalized path starts with / or \ (absolute)
-                if norm_path.startswith(('/', '\\')):
+                # Check if normalized path is absolute (after stripping leading /)
+                # v2.6.36: Azure DevOps returns root-relative paths starting with '/'
+                # Strip them before checking, consistent with pr_webhook.py
+                norm_path_stripped = norm_path.lstrip('/\\')
+                if os.path.isabs(norm_path_stripped):
                     return False
 
                 # Additional check: ensure normalized path doesn't escape current directory

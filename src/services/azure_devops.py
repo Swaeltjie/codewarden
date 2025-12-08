@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.6.35 - API corrections: removed invalid diffContentType, added versionType params
+Version: 2.6.36 - Simplified session reinitialization logic
 """
 import aiohttp
 import asyncio
@@ -154,14 +154,11 @@ class AzureDevOpsClient:
                         pass
                     self._session = None
 
-            # Session needs initialization or reinitializtion
+            # Session needs initialization or reinitialization
+            # v2.6.36: Simplified - if session is closed, just set to None (no need to close again)
             if self._session is None or self._session.closed:
-                # Clean up old session if it exists and is closed
-                if self._session is not None and self._session.closed:
-                    try:
-                        await self._session.close()
-                    except Exception:
-                        pass  # Already closed
+                if self._session is not None:
+                    # Session exists but is closed - just clear the reference
                     self._session = None
 
                 auth_header = await self._get_auth_token()

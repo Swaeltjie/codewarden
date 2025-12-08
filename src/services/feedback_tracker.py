@@ -4,7 +4,7 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.6.3 - Non-blocking table operations
+Version: 2.6.36 - OData datetime format consistency
 """
 import asyncio
 import uuid
@@ -106,9 +106,9 @@ class FeedbackTracker:
             history_table = get_table_client('reviewhistory')
 
             # Query reviews from the last N hours
-            # Note: reviewed_at is stored as ISO string, not native datetime
-            # Use string comparison (ISO format is lexicographically sortable)
-            query_filter = f"reviewed_at ge '{cutoff_time.isoformat()}'"
+            # Note: reviewed_at is stored as ISO string
+            # Use OData datetime format for consistency with pattern_detector.py
+            query_filter = f"reviewed_at ge datetime'{cutoff_time.isoformat()}'"
 
             # v2.6.3: Use pagination with non-blocking thread pool
             recent_reviews = await asyncio.to_thread(
@@ -505,8 +505,8 @@ class FeedbackTracker:
 
         try:
             # Query feedback from last N days
-            # Note: feedback_received_at is stored as ISO string, not native datetime
-            query_filter = f"feedback_received_at ge '{cutoff_time.isoformat()}'"
+            # Use OData datetime format for consistency across codebase
+            query_filter = f"feedback_received_at ge datetime'{cutoff_time.isoformat()}'"
 
             # v2.6.3: Use pagination with non-blocking thread pool
             feedback_entries = await asyncio.to_thread(

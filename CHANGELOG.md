@@ -5,6 +5,47 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.36] - 2025-12-08
+
+### Fixed - Second Round Bug Fixes from Code Review
+
+**Changes:**
+
+1. **DateTime Format Consistency in Feedback Tracker** (MEDIUM)
+   - Aligned OData datetime format in `feedback_tracker.py` with `pattern_detector.py`
+   - Changed to use `datetime'{iso_format}'` format for consistency
+
+2. **Days Parameter Validation in Pattern Detector** (MEDIUM)
+   - Added validation for `days` parameter (1-365 range)
+   - Prevents DoS via excessive date range queries
+
+3. **Session Reinitialization Logic in Azure DevOps Client** (LOW)
+   - Simplified session handling - removed redundant `close()` on already-closed session
+   - Session reference is now cleared when closed, avoiding double-close errors
+
+4. **Response Cache Path Validation** (MEDIUM)
+   - Fixed path validation to strip leading slashes before absolute path check
+   - Consistent with `pr_webhook.py` path handling for Azure DevOps root-relative paths
+
+5. **CircuitBreakerManager Lock Initialization** (HIGH)
+   - Changed class-level `asyncio.Lock()` to lazy initialization via `_get_lock()` method
+   - Prevents event loop binding issues when module is imported before loop starts
+
+6. **AI Client Close Timeout Protection** (LOW)
+   - Added 5-second timeout to `close()` method to prevent hung shutdown
+   - Gracefully handles timeout and errors with proper logging
+
+**Files Changed:**
+- `src/services/feedback_tracker.py` - DateTime format fix
+- `src/services/pattern_detector.py` - Days validation
+- `src/services/azure_devops.py` - Session logic simplification
+- `src/services/response_cache.py` - Path validation fix
+- `src/services/circuit_breaker.py` - Lazy lock initialization
+- `src/services/ai_client.py` - Close timeout protection
+- `src/utils/config.py` - Version bump to 2.6.36
+
+---
+
 ## [2.6.35] - 2025-12-08
 
 ### Fixed - Azure DevOps API Corrections per Official v7.1 Documentation

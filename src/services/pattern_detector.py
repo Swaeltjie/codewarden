@@ -4,7 +4,7 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.6.5 - Use centralized constants
+Version: 2.6.36 - Added days parameter validation
 """
 import json
 from typing import List, Dict, Tuple, Optional
@@ -132,6 +132,11 @@ class PatternDetector:
         """
         # Initialize metrics for this run
         metrics = PatternDetectorMetrics()
+
+        # v2.6.36: Validate days parameter (prevents DoS via excessive date range)
+        if not isinstance(days, int) or days < 1 or days > 365:
+            logger.warning("invalid_days_parameter", days=days)
+            return []
 
         logger.info("pattern_analysis_started", days=days)
 

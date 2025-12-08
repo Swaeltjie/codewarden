@@ -4,7 +4,7 @@ Circuit Breaker Pattern
 
 Prevents cascading failures when external services are down.
 
-Version: 2.6.5 - Type hints for decorator
+Version: 2.6.36 - Lazy lock initialization to avoid event loop binding
 """
 from typing import Callable, Any, Optional, Dict, TypeVar, ParamSpec
 from datetime import datetime, timezone, timedelta
@@ -229,7 +229,15 @@ class CircuitBreakerManager:
     """
 
     _instances: Dict[str, CircuitBreaker] = {}
-    _lock = asyncio.Lock()
+    # v2.6.36: Lazy-initialized lock to avoid event loop binding at import time
+    _lock: Optional[asyncio.Lock] = None
+
+    @classmethod
+    def _get_lock(cls) -> asyncio.Lock:
+        """Get or create lock (lazy initialization to avoid event loop issues)."""
+        if cls._lock is None:
+            cls._lock = asyncio.Lock()
+        return cls._lock
 
     @classmethod
     async def get_breaker(
@@ -251,7 +259,7 @@ class CircuitBreakerManager:
         Returns:
             CircuitBreaker instance
         """
-        async with cls._lock:
+        async with cls._get_lock():
             if service_name not in cls._instances:
                 cls._instances[service_name] = CircuitBreaker(
                     service_name=service_name,

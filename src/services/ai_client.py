@@ -6,7 +6,7 @@ Handles interactions with OpenAI API for code review analysis.
 Includes retry logic, rate limiting, structured response parsing,
 and circuit breaker protection.
 
-Version: 2.6.5 - Type hints for inner functions
+Version: 2.6.36 - Added timeout protection to client close
 """
 import asyncio
 from openai import AsyncOpenAI
@@ -391,11 +391,14 @@ class AIClient:
             return len(text) // 4
     
     async def close(self) -> None:
-        """Close the OpenAI client."""
+        """Close the OpenAI client with timeout protection."""
         if self._client:
             try:
-                await self._client.close()
+                # v2.6.36: Add timeout to prevent hung shutdown
+                await asyncio.wait_for(self._client.close(), timeout=5.0)
                 logger.debug("ai_client_closed")
+            except asyncio.TimeoutError:
+                logger.warning("ai_client_close_timeout")
             except Exception as e:
                 logger.warning("ai_client_close_error", error=str(e))
             finally:
