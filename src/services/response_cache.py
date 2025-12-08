@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.6.4 - Bug fixes for blocking operations and race conditions
+Version: 2.6.34 - Added defensive logging for cache statistics inconsistency
 """
 import asyncio
 import json
@@ -552,7 +552,14 @@ class ResponseCache:
 
             # Cache reuse statistics
             # Note: hit_count starts at 1 for initial store, so actual cache hits = hit_count - 1
-            # Prevent negative values from edge cases
+            # Prevent negative values from edge cases (e.g., database inconsistencies)
+            if total_hits < total_entries:
+                logger.warning(
+                    "cache_statistics_inconsistency",
+                    total_hits=total_hits,
+                    total_entries=total_entries,
+                    message="total_hits < total_entries indicates data inconsistency"
+                )
             cache_hits = max(0, total_hits - total_entries)  # Subtract initial stores, ensure non-negative
             avg_reuse_per_entry = (cache_hits / total_entries) if total_entries > 0 else 0.0
             cache_efficiency_percent = (reused_entries / total_entries * 100.0) if total_entries > 0 else 0.0

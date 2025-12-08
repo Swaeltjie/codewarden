@@ -5,7 +5,7 @@ AI PR Reviewer - Main Azure Functions Entry Point
 This module defines the Azure Functions HTTP triggers and orchestrates
 the PR review workflow.
 
-Version: 2.6.33 - Input validation for days parameter
+Version: 2.6.34 - Lowered rate limiter cleanup threshold for memory efficiency
 """
 import azure.functions as func
 import logging
@@ -806,9 +806,10 @@ class RateLimiter:
         window_start = now - self.window_seconds
 
         async with self._lock:
-            # v2.6.2: Periodic cleanup to prevent memory growth
-            # Run cleanup every minute or when too many clients tracked
-            if (len(self._requests) > self.MAX_TRACKED_CLIENTS or
+            # v2.6.34: Periodic cleanup to prevent memory growth
+            # Run cleanup every minute or when client count exceeds threshold
+            # Lowered from MAX_TRACKED_CLIENTS (10000) to 1000 for better memory efficiency
+            if (len(self._requests) > 1000 or
                     now - self._last_cleanup > 60):
                 self._cleanup_stale_clients(window_start)
                 self._last_cleanup = now

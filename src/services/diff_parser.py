@@ -5,7 +5,7 @@ Git Diff Parser with Diff-Only Analysis
 Parses git diffs to extract only changed sections, dramatically reducing
 token usage and improving review focus.
 
-Version: 2.6.26 - Fallback parser for unidiff compatibility
+Version: 2.6.34 - Added file-level error handling for resilient diff parsing
 """
 from typing import List, Optional
 from dataclasses import dataclass
@@ -99,8 +99,17 @@ class DiffParser:
             
             sections = []
             for patched_file in patch_set:
-                file_sections = self._extract_file_sections(patched_file)
-                sections.extend(file_sections)
+                try:
+                    file_sections = self._extract_file_sections(patched_file)
+                    sections.extend(file_sections)
+                except Exception as e:
+                    # Log and continue processing other files for resilience
+                    logger.warning(
+                        "diff_section_extraction_failed",
+                        file_path=getattr(patched_file, 'path', 'unknown'),
+                        error=str(e),
+                        error_type=type(e).__name__
+                    )
             
             logger.info(
                 "diff_parsed",

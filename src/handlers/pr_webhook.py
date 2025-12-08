@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.6.24 - Fixed duration timing and file content fetching
+Version: 2.6.34 - Fixed path validation for Azure DevOps root-relative paths
 """
 import asyncio
 from typing import Dict, List, Optional, Tuple
@@ -442,8 +442,12 @@ class PRWebhookHandler:
             if '..' in Path(normalized).parts:
                 return False
 
-            # Check if normalized path starts with / or \ (absolute)
-            if normalized.startswith(('/', '\\')):
+            # Check if normalized path is absolute (after stripping leading /)
+            # Note: We already handled Azure DevOps root-relative paths at line 418
+            # by stripping leading '/'. The normalized path should not be absolute.
+            # Use lstrip to handle the case where normpath preserves leading slashes
+            normalized_stripped = normalized.lstrip('/\\')
+            if os.path.isabs(normalized_stripped):
                 return False
 
             # Additional check: ensure normalized path doesn't escape current directory

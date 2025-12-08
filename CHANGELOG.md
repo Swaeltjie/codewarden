@@ -5,6 +5,44 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.34] - 2025-12-08
+
+### Fixed - Bug Fixes from Code Review
+
+**Changes:**
+
+1. **Fixed Path Validation Logic Error** (HIGH)
+   - `_is_safe_path()` incorrectly rejected valid Azure DevOps root-relative paths
+   - `os.path.normpath()` preserves leading `/`, causing check at line 445-447 to fail
+   - Fixed by stripping leading slashes before absolute path check
+
+2. **Added Defensive Logging for Cache Statistics**
+   - Added warning log when `total_hits < total_entries` indicates data inconsistency
+   - Helps identify database sync issues without crashing
+
+3. **Added File-Level Error Handling in Diff Parser**
+   - Individual file extraction failures no longer stop entire diff parsing
+   - Logs warning and continues processing other files
+   - Improves resilience for malformed diffs
+
+4. **Fixed Attribute Access in Review Aggregation**
+   - Used `getattr()` with defaults instead of direct attribute assignment
+   - Handles immutable objects (frozen dataclasses, slots) gracefully
+
+5. **Lowered Rate Limiter Cleanup Threshold**
+   - Reduced cleanup threshold from 10,000 to 1,000 clients
+   - Prevents excessive memory growth in long-running instances
+
+**Files Changed:**
+- `src/handlers/pr_webhook.py` - Fixed path validation logic
+- `src/services/response_cache.py` - Added cache statistics warning
+- `src/services/diff_parser.py` - Added per-file error handling
+- `src/models/review_result.py` - Fixed attribute access pattern
+- `function_app.py` - Lowered rate limiter cleanup threshold
+- `src/utils/config.py` - Version bump to 2.6.34
+
+---
+
 ## [2.6.33] - 2025-12-08
 
 ### Fixed - Code Review Bug Fixes and Documentation Updates
@@ -23,7 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 3. **Documentation Updates**
    - Updated README to reflect 90+ supported file types
-   - Removed company-identifiable information from changelog and code comments
 
 **Files Changed:**
 - `src/services/azure_devops.py` - URL encoding for query parameters

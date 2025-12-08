@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.6.5 - Use centralized constants
+Version: 2.6.34 - Fixed attribute access in review aggregation for immutable objects
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -419,15 +419,15 @@ class ReviewResult(BaseModel):
                 if not hasattr(result, 'issues') or result.issues is None:
                     _logger.warning("aggregate_result_missing_issues")
                     continue
-                if not hasattr(result, 'tokens_used'):
-                    _logger.warning("aggregate_result_missing_tokens")
-                    result.tokens_used = 0
-                if not hasattr(result, 'estimated_cost'):
-                    result.estimated_cost = 0.0
+
+                # Safely set default values for missing attributes
+                # Use getattr with defaults to handle immutable objects
+                tokens_used = getattr(result, 'tokens_used', 0) or 0
+                estimated_cost = getattr(result, 'estimated_cost', 0.0) or 0.0
 
                 all_issues.extend(result.issues)
-                total_tokens += result.tokens_used
-                total_cost += result.estimated_cost
+                total_tokens += tokens_used
+                total_cost += estimated_cost
 
                 # Cap at Pydantic field limits to prevent validation errors
                 if total_tokens >= MAX_AGGREGATED_TOKENS:
