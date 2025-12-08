@@ -5,77 +5,77 @@
 ### System Architecture Diagram
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                         Azure DevOps                              │
+┌─────────────────────────────────────────────────────────────────┐
+│                          Azure DevOps                           │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐          │
-│  │  Developer  │───▶│  Pull       │───▶│  Service    │          │
-│  │  Creates PR │    │  Request    │    │  Hook       │          │
+│  │  Developer  │───▶│    Pull    │───▶│   Service   │          │
+│  │  Creates PR │    │   Request   │    │    Hook     │          │
 │  └─────────────┘    └─────────────┘    └──────┬──────┘          │
-└────────────────────────────────────────────────┼──────────────────┘
-                                                  │
-                    Webhook (HTTP POST)           │
-                    PR Event JSON                 │
-                                                  ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                   Azure Functions (Python 3.12)                   │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                  HTTP Trigger: pr_webhook                    │ │
-│  │  • Validate webhook secret                                  │ │
-│  │  • Parse PR event                                           │ │
-│  │  • Return 202 Accepted (async processing)                   │ │
-│  └────────────────────────┬────────────────────────────────────┘ │
-│                           ▼                                       │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │           PR Review Orchestrator (pr_webhook.py)            │ │
-│  │                                                             │ │
-│  │  Step 1: Fetch PR Details                                  │ │
-│  │    ├─ Get changed files from Azure DevOps API              │ │
-│  │    ├─ Download git diffs for each file                     │ │
-│  │    └─ Classify file types (Terraform, Ansible, etc.)       │ │
-│  │                                                             │ │
-│  │  Step 2: Parse Diffs (Diff-Only Analysis)                  │ │
-│  │    ├─ Extract only changed lines (+ removed, added)        │ │
-│  │    ├─ Include 3 lines context before/after                 │ │
-│  │    └─ Calculate token savings (50-85%)                     │ │
-│  │                                                             │ │
-│  │  Step 3: Determine Review Strategy                         │ │
-│  │    ├─ Small PR (≤5 files) → Single-pass review            │ │
-│  │    ├─ Medium PR (6-15) → Chunked review                   │ │
-│  │    └─ Large PR (>15) → Hierarchical review                │ │
-│  │                                                             │ │
-│  │  Step 4: Get Learning Context                              │ │
-│  │    ├─ Load feedback from Table Storage                     │ │
-│  │    ├─ Identify high/low value checks                       │ │
-│  │    └─ Apply team-specific patterns                         │ │
-│  │                                                             │ │
-│  │  Step 5: AI Review                                         │ │
-│  │    ├─ Build technology-specific prompt                     │ │
-│  │    ├─ Call OpenAI API (with retry logic)                   │ │
-│  │    └─ Parse structured JSON response                       │ │
-│  │                                                             │ │
-│  │  Step 6: Post Results                                      │ │
-│  │    ├─ Summary comment to PR                                │ │
-│  │    └─ Inline comments for critical issues                  │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │      Timer Trigger: feedback_collector (Hourly)             │ │
-│  │  • Monitor PR threads for reactions (thumbs up/down)        │ │
-│  │  • Track resolved/won't fix status                          │ │
-│  │  • Store feedback in Table Storage                          │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │     Timer Trigger: pattern_detector (Daily 2 AM)            │ │
-│  │  • Analyze historical reviews from Table Storage            │ │
-│  │  • Detect recurring issues                                  │ │
-│  │  • Identify problematic files                               │ │
-│  │  • Generate monthly reports                                 │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────────────────────────────────────────┘
-         │                    │                    │
-         ▼                    ▼                    ▼
+└───────────────────────────────────────────────┼─────────────────┘
+                                                │
+                   Webhook (HTTP POST)          │
+                   PR Event JSON                │
+                                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  Azure Functions (Python 3.12)                  │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                 HTTP Trigger: pr_webhook                  │  │
+│  │  • Validate webhook secret                                │  │
+│  │  • Parse PR event                                         │  │
+│  │  • Return 202 Accepted (async processing)                 │  │
+│  └────────────────────────┬──────────────────────────────────┘  │
+│                           ▼                                     │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │          PR Review Orchestrator (pr_webhook.py)           │  │
+│  │                                                           │  │
+│  │  Step 1: Fetch PR Details                                 │  │
+│  │    ├─ Get changed files from Azure DevOps API             │  │
+│  │    ├─ Download git diffs for each file                    │  │
+│  │    └─ Classify file types (Terraform, Ansible, etc.)      │  │
+│  │                                                           │  │
+│  │  Step 2: Parse Diffs (Diff-Only Analysis)                 │  │
+│  │    ├─ Extract only changed lines (+ removed, added)       │  │
+│  │    ├─ Include 3 lines context before/after                │  │
+│  │    └─ Calculate token savings (50-85%)                    │  │
+│  │                                                           │  │
+│  │  Step 3: Determine Review Strategy                        │  │
+│  │    ├─ Small PR (≤5 files) → Single-pass review            │  │
+│  │    ├─ Medium PR (6-15) → Chunked review                   │  │
+│  │    └─ Large PR (>15) → Hierarchical review                │  │
+│  │                                                           │  │
+│  │  Step 4: Get Learning Context                             │  │
+│  │    ├─ Load feedback from Table Storage                    │  │
+│  │    ├─ Identify high/low value checks                      │  │
+│  │    └─ Apply team-specific patterns                        │  │
+│  │                                                           │  │
+│  │  Step 5: AI Review                                        │  │
+│  │    ├─ Build technology-specific prompt                    │  │
+│  │    ├─ Call OpenAI API (with retry logic)                  │  │
+│  │    └─ Parse structured JSON response                      │  │
+│  │                                                           │  │
+│  │  Step 6: Post Results                                     │  │
+│  │    ├─ Summary comment to PR                               │  │
+│  │    └─ Inline comments for critical issues                 │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │     Timer Trigger: feedback_collector (Hourly)            │  │
+│  │  • Monitor PR threads for reactions (thumbs up/down)      │  │
+│  │  • Track resolved/won't fix status                        │  │
+│  │  • Store feedback in Table Storage                        │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │    Timer Trigger: pattern_detector (Daily 2 AM)           │  │
+│  │  • Analyze historical reviews from Table Storage          │  │
+│  │  • Detect recurring issues                                │  │
+│  │  • Identify problematic files                             │  │
+│  │  • Generate monthly reports                               │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+        │                    │                    │
+        ▼                    ▼                    ▼
 ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
 │  Azure Key     │  │    OpenAI      │  │  Azure Table   │
 │    Vault       │  │      API       │  │    Storage     │
@@ -98,7 +98,7 @@ The system automatically chooses the best review strategy based on PR size:
 ```python
 def determine_strategy(files: List[FileChange]) -> ReviewStrategy:
     total_tokens = sum(estimate_tokens(f.changed_sections) for f in files)
-    
+
     if len(files) <= 5 and total_tokens <= 10_000:
         return ReviewStrategy.SINGLE_PASS
     elif len(files) <= 15 and total_tokens <= 40_000:
@@ -218,13 +218,13 @@ We evaluated three options for storing feedback and historical data:
 2. **Perfect Access Patterns**
    ```python
    # Our queries are simple key-value lookups
-   
+
    # Get specific feedback
    feedback = table_client.get_entity(
        partition_key="terraform-repo",
        row_key="feedback_12345"
    )
-   
+
    # Get recent feedback for repository
    recent = table_client.query_entities(
        "PartitionKey eq 'terraform-repo' and Timestamp gt datetime'2025-11-01'"
@@ -256,7 +256,7 @@ We evaluated three options for storing feedback and historical data:
   "PartitionKey": "terraform-prod-repo",
   "RowKey": "fb_67890",
   "Timestamp": "2025-11-30T12:34:56Z",
-  
+
   # Feedback details
   "pr_id": "123",
   "suggestion_id": "sg_456",
@@ -265,7 +265,7 @@ We evaluated three options for storing feedback and historical data:
   "feedback_type": "Accepted",  # Accepted, Rejected, Ignored
   "developer_id": "user@company.com",
   "file_type": "Terraform",
-  
+
   # Metrics
   "response_time_hours": 2.5
 }
@@ -281,24 +281,24 @@ We evaluated three options for storing feedback and historical data:
   "PartitionKey": "terraform-prod-repo",
   "RowKey": "pr_123",
   "Timestamp": "2025-11-30T12:00:00Z",
-  
+
   # Review metadata
   "author_email": "dev@company.com",
   "files_reviewed": 8,
   "file_types": "Terraform,Ansible",
-  
+
   # Results
   "issues_found": 12,
   "issues_critical": 2,
   "issues_high": 5,
   "issues_medium": 3,
   "issues_low": 2,
-  
+
   # Outcomes
   "issues_fixed": 10,
   "issues_ignored": 2,
   "recommendation": "request_changes",
-  
+
   # Performance
   "duration_seconds": 18.5,
   "tokens_used": 1200,
@@ -472,7 +472,7 @@ Results posted to DevOps (uses Managed Identity Azure AD token)
 // PR Review Success Rate
 requests
 | where name == "pr-webhook"
-| summarize 
+| summarize
     SuccessRate = countif(resultCode == 200) * 100.0 / count(),
     AvgDuration = avg(duration)
   by bin(timestamp, 1h)
@@ -481,7 +481,7 @@ requests
 customMetrics
 | where name == "ai_tokens_used"
 | extend cost = value * 0.00001  // $0.01 per 1K tokens
-| summarize 
+| summarize
     TotalTokens = sum(value),
     TotalCost = sum(cost)
   by bin(timestamp, 1d)
@@ -549,11 +549,11 @@ Scale: 50,000+ PRs/month
 
 **Architecture Decisions Summary:**
 
-✅ **Python over C#:** Better AI ecosystem, 2x faster development  
-✅ **Table Storage over Cosmos DB:** 10-20x cheaper, perfect fit  
-✅ **Diff-Only over Full Files:** 88% token savings  
-✅ **Consumption Plan over Premium:** Pay per use, scales automatically  
-✅ **Managed Identity over Keys:** Zero secrets in code  
+✅ **Python over C#:** Better AI ecosystem, 2x faster development
+✅ **Table Storage over Cosmos DB:** 10-20x cheaper, perfect fit
+✅ **Diff-Only over Full Files:** 88% token savings
+✅ **Consumption Plan over Premium:** Pay per use, scales automatically
+✅ **Managed Identity over Keys:** Zero secrets in code
 
 **Total Result:** Enterprise-grade solution at $12-15/month 🎯
 

@@ -16,7 +16,7 @@
 
 ```bash
 # Clone repository
-git clone <your-repo>
+git clone https://github.com/Swaeltjie/codewarden.git
 cd codewarden
 
 # Create virtual environment
