@@ -31,10 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    - Prevents value from temporarily exceeding MAX_AGGREGATED_TOKENS/MAX_AGGREGATED_COST
    - Improved logging to show both current value and value being added
 
+5. **File Type Registry Version Sync** (LOW)
+   - Updated stale version docstring from 2.6.1 to 2.6.37
+   - Registry file was functional but had outdated version marker
+
 **Files Changed:**
 - `src/services/response_cache.py` - Path validation order fix
 - `src/services/feedback_tracker.py` - Per-thread error handling + properties validation
 - `src/models/review_result.py` - Overflow check order fix
+- `src/services/file_type_registry.py` - Version sync
 - `src/utils/config.py` - Version bump to 2.6.37
 
 **Dependency Verification:**
