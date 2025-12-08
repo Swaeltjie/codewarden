@@ -5,7 +5,7 @@ Prompt Factory for AI Code Reviews
 Generates specialized prompts for different file types and review strategies.
 Supports few-shot learning with accepted examples and rejection patterns.
 
-Version: 2.7.0 - Added few-shot learning with examples and rejection patterns
+Version: 2.7.1 - Bug fixes: severity escaping, prompt size limits
 """
 from typing import List, Dict, Optional, Set, Union
 import re
@@ -486,12 +486,15 @@ Respond with valid JSON only:
 
         total_feedback = learning_context.get("total_feedback_count", 0)
 
+        # Issue #18: Use constant instead of magic number
+        from src.utils.constants import FEEDBACK_MIN_SAMPLES
+
         # Require minimum feedback for statistical significance
-        if total_feedback < 5:
+        if total_feedback < FEEDBACK_MIN_SAMPLES:
             logger.debug(
                 "insufficient_feedback_for_learning",
                 total_feedback=total_feedback,
-                minimum_required=5,
+                minimum_required=FEEDBACK_MIN_SAMPLES,
             )
             return None
 
@@ -610,9 +613,13 @@ Respond with valid JSON only:
             safe_file_path = safe_file_path.replace("`", "'")
             safe_code_snippet = safe_code_snippet.replace("`", "'")
             safe_suggestion = safe_suggestion.replace("`", "'")
+            # Issue #14: Also escape severity for consistency
+            safe_severity = (
+                example.severity.replace("`", "'") if example.severity else "medium"
+            )
 
             section_parts.append(
-                f"**Example {i}: {safe_issue_type}** ({example.severity})"
+                f"**Example {i}: {safe_issue_type}** ({safe_severity})"
             )
             section_parts.append(f"File: `{safe_file_path}`")
 
@@ -743,11 +750,24 @@ Respond with valid JSON only:
         if not section_parts:
             return None
 
+        # Issue #5: Apply prompt size limit to prevent bloat
+        from src.utils.constants import MAX_LEARNING_SECTION_LENGTH
+
+        result = "\n".join(section_parts)
+        if len(result) > MAX_LEARNING_SECTION_LENGTH:
+            logger.warning(
+                "learning_section_truncated",
+                original_length=len(result),
+                max_length=MAX_LEARNING_SECTION_LENGTH,
+            )
+            result = result[:MAX_LEARNING_SECTION_LENGTH] + "\n...[truncated]"
+
         logger.info(
             "enhanced_learning_section_built",
             has_basic=basic_section is not None,
             has_examples=bool(examples),
             has_patterns=bool(rejection_patterns),
+            section_length=len(result),
         )
 
-        return "\n".join(section_parts)
+        return result

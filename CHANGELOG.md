@@ -5,6 +5,41 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1] - 2025-12-08
+
+### Fixed - Bug Fixes for Few-Shot Learning
+
+This release addresses 19 issues found during code review of the v2.7.0 feature:
+
+**Critical Fixes:**
+- Fixed potential division by zero in learning context statistics calculation
+- Added OData datetime format validation before query interpolation
+
+**High Priority Fixes:**
+- Added type coercion for file_path to handle non-string values from Table Storage
+- Added prompt size limits (MAX_LEARNING_SECTION_LENGTH = 10000) to prevent prompt bloat
+- Fixed null check in sample context slicing for rejection patterns
+
+**Medium Priority Fixes:**
+- Fixed off-by-one error in max examples limit using MAX_TOTAL_EXAMPLES_IN_PROMPT
+- Added consistent severity handling with lowercase normalization
+- Improved datetime fallback to use 30-day-ago default instead of datetime.min
+- Added days parameter validation with type check and clamping (1-365)
+- Added KeyError protection using .get() in statistics loop
+- Added deduplication of examples by (pr_id, thread_id) to prevent duplicates
+- Added backtick escaping for severity field in few-shot examples
+- Added empty rejection patterns check with early return
+- Added repository parameter validation with type and empty string checks
+- Replaced magic number 5 with FEEDBACK_MIN_SAMPLES constant in factory.py
+
+**Low Priority Fixes:**
+- Improved logging of rejection pattern analysis with total counts
+- Added acceptance_count upper bound (le=10000) in FeedbackExample model
+- Added TODO comment for placeholder text in example extraction
+
+**New Constant:**
+- `MAX_LEARNING_SECTION_LENGTH = 10000` - Maximum characters for learning section
+
 ## [2.7.0] - 2025-12-08
 
 ### Added - Few-Shot Learning from Feedback

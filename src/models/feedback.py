@@ -5,7 +5,7 @@ Data models for feedback tracking and learning.
 Represents developer feedback on AI suggestions for continuous improvement.
 Includes few-shot learning support for adaptive AI reviews.
 
-Version: 2.7.0 - Added FeedbackExample, LearningContext, RejectionPattern for few-shot learning
+Version: 2.7.1 - Bug fix: acceptance_count upper bound validation
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import Dict, List, Optional
@@ -364,7 +364,7 @@ class FeedbackExample(BaseModel):
     file_path: str = Field(..., max_length=500, description="File context")
     severity: str = Field(..., max_length=50, description="Issue severity")
     acceptance_count: int = Field(
-        default=1, ge=0, description="Times similar suggestions were accepted"
+        default=1, ge=0, le=10000, description="Times similar suggestions were accepted"
     )
 
     @field_validator("code_snippet", "suggestion")

@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.7.0 - Added feedback learning constants for few-shot learning
+Version: 2.7.1 - Added MAX_LEARNING_SECTION_LENGTH constant
 """
 
 # =============================================================================
@@ -262,6 +262,9 @@ MAX_REJECTION_PATTERNS = 5
 
 # Minimum rejections before a pattern is considered significant
 MIN_REJECTIONS_FOR_PATTERN = 3
+
+# Maximum characters for enhanced learning section (prevents prompt bloat)
+MAX_LEARNING_SECTION_LENGTH = 10000
 
 # =============================================================================
 # REVIEW HISTORY SETTINGS

@@ -5,7 +5,7 @@ Feedback Tracker
 Tracks developer feedback on AI suggestions to improve over time.
 Supports few-shot learning with accepted examples and rejection patterns.
 
-Version: 2.7.0 - Added few-shot learning with examples and rejection patterns
+Version: 2.7.1 - Bug fixes: division by zero, OData validation, type coercion, deduplication
 """
 import asyncio
 import uuid
@@ -639,21 +639,34 @@ class FeedbackTracker:
             if issue_type and issue_type != "unknown":
                 by_issue_type[issue_type].append(entry)
 
-        # Helper to safely parse datetime for sorting
+        # Issue #10: Helper to safely parse datetime for sorting
+        # Use reasonable default (30 days ago) instead of datetime.min (year 1)
+        default_datetime = datetime.now(timezone.utc) - timedelta(days=30)
+
         def get_feedback_datetime(entry: dict) -> datetime:
             dt_str = entry.get("feedback_received_at", "")
             if not dt_str:
-                return datetime.min.replace(tzinfo=timezone.utc)
+                return default_datetime
             try:
                 dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
                 return dt
             except (ValueError, TypeError):
-                return datetime.min.replace(tzinfo=timezone.utc)
+                return default_datetime
+
+        # Issue #8 & #13: Track total examples and deduplicate
+        from src.utils.constants import MAX_TOTAL_EXAMPLES_IN_PROMPT
+
+        total_examples_created = 0
+        seen_threads: set = set()
 
         # For each issue type, create FeedbackExample objects
         for issue_type, entries in by_issue_type.items():
+            # Stop if we've created enough total examples
+            if total_examples_created >= MAX_TOTAL_EXAMPLES_IN_PROMPT:
+                break
+
             # Sort by recency (most recent first) using proper datetime comparison
             sorted_entries = sorted(
                 entries,
@@ -661,27 +674,52 @@ class FeedbackTracker:
                 reverse=True,
             )
 
-            # Take up to MAX_EXAMPLES_PER_ISSUE_TYPE
-            for entry in sorted_entries[:MAX_EXAMPLES_PER_ISSUE_TYPE]:
-                try:
-                    # Extract code snippet from file_path context
-                    # In real implementation, we'd fetch from cache or PR data
-                    file_path = entry.get("file_path", "unknown")
+            # Calculate remaining slots for this issue type
+            remaining_slots = min(
+                MAX_EXAMPLES_PER_ISSUE_TYPE,
+                MAX_TOTAL_EXAMPLES_IN_PROMPT - total_examples_created,
+            )
 
-                    # Create example with truncated content
+            for entry in sorted_entries:
+                if len(examples[issue_type]) >= remaining_slots:
+                    break
+
+                try:
+                    # Issue #13: Deduplicate by pr_id and thread_id
+                    thread_key = (entry.get("pr_id"), entry.get("thread_id"))
+                    if thread_key in seen_threads:
+                        continue
+                    seen_threads.add(thread_key)
+
+                    # Issue #3: Type coercion for file_path
+                    file_path_value = entry.get("file_path", "unknown")
+                    file_path = str(file_path_value) if file_path_value else "unknown"
+
+                    # Issue #9: Consistent severity handling with lowercase
+                    severity_value = entry.get("severity", "medium")
+                    severity = (
+                        severity_value.lower()
+                        if isinstance(severity_value, str)
+                        else "medium"
+                    )
+
+                    # Issue #21: TODO comment for placeholder text
+                    # TODO: Fetch actual code snippet and suggestion from review cache
+                    # For now, use placeholder until cache integration is implemented
                     example = FeedbackExample(
                         issue_type=issue_type,
                         code_snippet=f"[Code from {file_path}]"[
                             :MAX_EXAMPLE_CODE_SNIPPET_LENGTH
                         ],
-                        suggestion=f"Issue flagged and accepted by team"[
+                        suggestion="Issue flagged and accepted by team"[
                             :MAX_EXAMPLE_SUGGESTION_LENGTH
                         ],
                         file_path=file_path[:500],
-                        severity=entry.get("severity", "medium"),
+                        severity=severity,
                         acceptance_count=1,
                     )
                     examples[issue_type].append(example)
+                    total_examples_created += 1
 
                 except Exception as e:
                     logger.warning(
@@ -739,9 +777,17 @@ class FeedbackTracker:
             issue_type = entry.get("issue_type", "unknown")
             if issue_type and issue_type != "unknown":
                 rejection_counts[issue_type] += 1
-                # Keep first file_path as sample context
+                # Issue #7: Keep first file_path as sample context with type coercion
                 if issue_type not in sample_contexts:
-                    sample_contexts[issue_type] = entry.get("file_path", "")[:200]
+                    file_path_value = entry.get("file_path", "")
+                    sample_contexts[issue_type] = (
+                        str(file_path_value)[:200] if file_path_value else ""
+                    )
+
+        # Issue #15: Early return if no rejection patterns found
+        if not rejection_counts:
+            logger.debug("no_rejection_patterns_found", repository=repository)
+            return patterns
 
         # Create patterns for issue types with significant rejections
         for issue_type, count in rejection_counts.most_common(MAX_REJECTION_PATTERNS):
@@ -754,10 +800,12 @@ class FeedbackTracker:
                 )
                 patterns.append(pattern)
 
+        # Issue #19: More informative logging
         logger.info(
             "rejection_patterns_analyzed",
             repository=repository,
-            patterns_found=len(patterns),
+            patterns_created=len(patterns),
+            total_rejection_types=len(rejection_counts),
             total_rejections=len(negative_entries),
         )
 
@@ -783,14 +831,27 @@ class FeedbackTracker:
         Returns:
             LearningContext object with examples and patterns
         """
+        # Issue #16: Validate repository parameter
+        if not repository or not isinstance(repository, str):
+            logger.error("invalid_repository_parameter", repository=repository)
+            return LearningContext(repository="unknown", days_analyzed=days)
+
+        repository = repository.strip()
+        if not repository:
+            logger.error("empty_repository_parameter")
+            return LearningContext(repository="unknown", days_analyzed=days)
+
+        # Issue #11: Validate and clamp days parameter with type check
+        if not isinstance(days, int):
+            logger.warning("invalid_days_type", days_type=type(days).__name__)
+            days = LEARNING_CONTEXT_DAYS
+        days = max(1, min(365, days))
+
         logger.info(
             "enhanced_learning_context_requested",
             repository=repository,
             days=days,
         )
-
-        # Validate days parameter
-        days = max(1, min(365, days))
 
         # Ensure table exists
         await asyncio.to_thread(ensure_table_exists, "feedback")
@@ -801,9 +862,16 @@ class FeedbackTracker:
         try:
             # Query feedback for this repository within time window
             safe_repository = sanitize_odata_value(repository)
+
+            # Issue #2: Validate datetime format before interpolation
+            safe_cutoff = cutoff_time.isoformat()
+            if not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", safe_cutoff):
+                logger.error("invalid_cutoff_time_format", cutoff=safe_cutoff)
+                return LearningContext(repository=repository, days_analyzed=days)
+
             query_filter = (
                 f"PartitionKey eq '{safe_repository}' and "
-                f"feedback_received_at ge datetime'{cutoff_time.isoformat()}'"
+                f"feedback_received_at ge datetime'{safe_cutoff}'"
             )
 
             feedback_entries = await asyncio.to_thread(
@@ -856,9 +924,13 @@ class FeedbackTracker:
             low_value: List[str] = []
 
             for issue_type, stats in issue_stats.items():
-                total = stats["positive"] + stats["negative"]
-                if total >= FEEDBACK_MIN_SAMPLES:
-                    rate = stats["positive"] / total
+                # Use .get() for KeyError protection
+                positive = stats.get("positive", 0)
+                negative = stats.get("negative", 0)
+                total = positive + negative
+                # Explicit zero check prevents division by zero
+                if total >= FEEDBACK_MIN_SAMPLES and total > 0:
+                    rate = positive / total
                     if rate >= FEEDBACK_HIGH_VALUE_THRESHOLD:
                         high_value.append(issue_type)
                     elif rate <= FEEDBACK_LOW_VALUE_THRESHOLD:
