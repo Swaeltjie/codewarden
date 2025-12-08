@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-features">Features</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#features">Features</a> •
   <a href="docs/DEPLOYMENT-GUIDE.md">Deploy</a> •
   <a href="docs/ARCHITECTURE.md">Architecture</a> •
   <a href="CONTRIBUTING.md">Contribute</a>
