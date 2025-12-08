@@ -621,8 +621,12 @@ class FeedbackTracker:
         """
         examples: Dict[str, List[FeedbackExample]] = defaultdict(list)
 
-        # Filter to positive feedback only
-        positive_entries = [e for e in feedback_entries if e.get("is_positive", False)]
+        # Filter to positive feedback only (with type validation)
+        positive_entries = [
+            e
+            for e in feedback_entries
+            if isinstance(e, dict) and e.get("is_positive") is True
+        ]
 
         if not positive_entries:
             logger.debug("no_positive_feedback", repository=repository)
@@ -632,15 +636,28 @@ class FeedbackTracker:
         by_issue_type: Dict[str, List[dict]] = defaultdict(list)
         for entry in positive_entries:
             issue_type = entry.get("issue_type", "unknown")
-            if issue_type != "unknown":
+            if issue_type and issue_type != "unknown":
                 by_issue_type[issue_type].append(entry)
+
+        # Helper to safely parse datetime for sorting
+        def get_feedback_datetime(entry: dict) -> datetime:
+            dt_str = entry.get("feedback_received_at", "")
+            if not dt_str:
+                return datetime.min.replace(tzinfo=timezone.utc)
+            try:
+                dt = datetime.fromisoformat(str(dt_str).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except (ValueError, TypeError):
+                return datetime.min.replace(tzinfo=timezone.utc)
 
         # For each issue type, create FeedbackExample objects
         for issue_type, entries in by_issue_type.items():
-            # Sort by recency (most recent first)
+            # Sort by recency (most recent first) using proper datetime comparison
             sorted_entries = sorted(
                 entries,
-                key=lambda x: x.get("feedback_received_at", ""),
+                key=get_feedback_datetime,
                 reverse=True,
             )
 
@@ -703,9 +720,11 @@ class FeedbackTracker:
         """
         patterns: List[RejectionPattern] = []
 
-        # Filter to negative feedback only
+        # Filter to negative feedback only (explicit False check)
         negative_entries = [
-            e for e in feedback_entries if not e.get("is_positive", True)
+            e
+            for e in feedback_entries
+            if isinstance(e, dict) and e.get("is_positive") is False
         ]
 
         if not negative_entries:
@@ -718,7 +737,7 @@ class FeedbackTracker:
 
         for entry in negative_entries:
             issue_type = entry.get("issue_type", "unknown")
-            if issue_type != "unknown":
+            if issue_type and issue_type != "unknown":
                 rejection_counts[issue_type] += 1
                 # Keep first file_path as sample context
                 if issue_type not in sample_contexts:
@@ -805,15 +824,32 @@ class FeedbackTracker:
             total_negative = 0
 
             for entry in feedback_entries:
-                issue_type = entry.get("issue_type", "unknown")
-                is_positive = entry.get("is_positive", False)
+                try:
+                    # Validate entry is a dictionary
+                    if not isinstance(entry, dict):
+                        logger.warning(
+                            "invalid_feedback_entry_type",
+                            entry_type=type(entry).__name__,
+                        )
+                        continue
 
-                if is_positive:
-                    issue_stats[issue_type]["positive"] += 1
-                    total_positive += 1
-                else:
-                    issue_stats[issue_type]["negative"] += 1
-                    total_negative += 1
+                    issue_type = entry.get("issue_type", "unknown")
+                    is_positive = entry.get("is_positive", False)
+
+                    if is_positive:
+                        issue_stats[issue_type]["positive"] += 1
+                        total_positive += 1
+                    else:
+                        issue_stats[issue_type]["negative"] += 1
+                        total_negative += 1
+                except Exception as e:
+                    # Log and continue - one bad entry shouldn't fail entire context
+                    logger.warning(
+                        "feedback_entry_processing_failed",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                    continue
 
             # Calculate rates and categorize issue types
             high_value: List[str] = []

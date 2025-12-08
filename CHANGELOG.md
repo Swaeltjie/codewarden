@@ -99,6 +99,59 @@ MIN_REJECTIONS_FOR_PATTERN = 3        # Min rejections needed
 - Reversible: Just modify prompts, no model changes
 - Based on 2025 best practices from GitHub Copilot, SonarQube patterns
 
+### Fixed - Bug Fixes from Code Review
+
+**Issues identified and fixed during code review of v2.7.0 feature:**
+
+1. **Severity "unknown" Fails Pydantic Validation** (CRITICAL)
+   - FeedbackEntity model requires severity to be: critical, high, medium, low, info
+   - Changed default from "unknown" to "medium"
+   - Added parsing to extract severity from comment text
+   - File: `src/services/feedback_tracker.py`
+
+2. **Negative Filter Logic Inverted** (HIGH)
+   - `not e.get("is_positive", True)` incorrectly treated missing fields as negative
+   - Changed to explicit `e.get("is_positive") is False` for accurate filtering
+   - File: `src/services/feedback_tracker.py`
+
+3. **Missing Entry Validation** (HIGH)
+   - Added `isinstance(e, dict)` checks before dictionary access
+   - Prevents TypeError when processing malformed feedback entries
+   - File: `src/services/feedback_tracker.py`
+
+4. **Timezone-Naive Datetime Comparison** (HIGH)
+   - String comparison for datetime sorting was fragile
+   - Added proper datetime parsing helper with timezone handling
+   - Handles ISO format strings with proper UTC fallback
+   - File: `src/services/feedback_tracker.py`
+
+5. **Backtick Escaping in Prompt Injection** (HIGH)
+   - Backticks in user content could break markdown code block formatting
+   - Added escaping: `replace("`", "'")`
+   - Applies to file_path, code_snippet, and suggestion fields
+   - File: `src/prompts/factory.py`
+
+6. **Per-Entry Error Handling** (MEDIUM)
+   - Added try-except around individual entry processing in `get_enhanced_learning_context()`
+   - One bad entry no longer fails entire context generation
+   - Logs warning and continues processing
+   - File: `src/services/feedback_tracker.py`
+
+7. **Missing Validators on RejectionPattern** (MEDIUM)
+   - Added `sanitize_content` validator for null byte and injection protection
+   - Matches existing sanitization in FeedbackExample model
+   - File: `src/models/feedback.py`
+
+8. **Magic Number Instead of Constant** (MEDIUM)
+   - Changed hardcoded `5` to `FEEDBACK_MIN_SAMPLES` constant
+   - In `LearningContext.has_sufficient_data()` method
+   - File: `src/models/feedback.py`
+
+**Files Changed:**
+- `src/services/feedback_tracker.py` - Entry validation, datetime parsing, error handling
+- `src/prompts/factory.py` - Backtick escaping for prompt security
+- `src/models/feedback.py` - RejectionPattern validators, constant usage
+
 ---
 
 ## [2.6.37] - 2025-12-08

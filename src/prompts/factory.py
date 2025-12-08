@@ -606,6 +606,11 @@ Respond with valid JSON only:
             safe_code_snippet = self._sanitize_user_input(example.code_snippet, 500)
             safe_suggestion = self._sanitize_user_input(example.suggestion, 300)
 
+            # Escape backticks to prevent markdown breakout
+            safe_file_path = safe_file_path.replace("`", "'")
+            safe_code_snippet = safe_code_snippet.replace("`", "'")
+            safe_suggestion = safe_suggestion.replace("`", "'")
+
             section_parts.append(
                 f"**Example {i}: {safe_issue_type}** ({example.severity})"
             )

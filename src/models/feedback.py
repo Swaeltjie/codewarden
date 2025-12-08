@@ -16,6 +16,7 @@ import json
 from src.utils.constants import (
     MAX_EXAMPLE_CODE_SNIPPET_LENGTH,
     MAX_EXAMPLE_SUGGESTION_LENGTH,
+    FEEDBACK_MIN_SAMPLES,
 )
 
 
@@ -401,6 +402,21 @@ class RejectionPattern(BaseModel):
         None, max_length=200, description="Sample file/path context"
     )
 
+    @field_validator("issue_type", "reason", "sample_context", mode="before")
+    @classmethod
+    def sanitize_content(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize content to prevent prompt injection."""
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            v = str(v)
+        # Remove null bytes
+        v = v.replace("\x00", "")
+        # Limit consecutive newlines
+        while "\n\n\n" in v:
+            v = v.replace("\n\n\n", "\n\n")
+        return v.strip()
+
 
 class LearningContext(BaseModel):
     """
@@ -458,7 +474,7 @@ class LearningContext(BaseModel):
 
     def has_sufficient_data(self) -> bool:
         """Check if context has enough data to be useful."""
-        return self.total_feedback_count >= 5
+        return self.total_feedback_count >= FEEDBACK_MIN_SAMPLES
 
     def has_examples(self) -> bool:
         """Check if context has few-shot examples."""
