@@ -9,9 +9,10 @@ CodeWarden is an AI-powered Pull Request reviewer for Azure DevOps. It's an Azur
 - **Single source of truth**: `src/utils/config.py` contains `__version__`
 - **Update version at TOP of file only**: Each file has a docstring with `Version: X.Y.Z - description`
 - **NEVER put version numbers in the middle of code** - no inline `# v2.6.x:` comments
-- When modifying a file, update both:
+- When modifying a file, update all three:
   1. The `__version__` in `src/utils/config.py`
   2. The `Version:` line in the modified file's docstring
+  3. Add an entry in `CHANGELOG.md` describing the change
 
 ### Constants
 - **ALL magic numbers go in `src/utils/constants.py`**
