@@ -5,6 +5,48 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.37] - 2025-12-08
+
+### Fixed - Third Round Bug Fixes from Code Review
+
+**Changes:**
+
+1. **Path Validation Order in Response Cache** (MEDIUM)
+   - Fixed path validation to strip Azure DevOps leading slashes BEFORE absolute path checks
+   - Previously, paths like `/main.tf` were incorrectly rejected at early check stage
+   - Unified path processing flow for consistent behavior
+
+2. **Per-Thread Error Handling in Feedback Tracker** (MEDIUM)
+   - Added try/catch around individual thread processing in `_collect_pr_feedback`
+   - A single malformed thread no longer causes entire PR feedback collection to fail
+   - Logs warning and continues processing remaining threads
+
+3. **Properties Type Validation in Feedback Tracker** (MEDIUM)
+   - Added validation that `properties` dict is actually a dict before use
+   - Added try/catch around reaction count int conversion
+   - Protects against malformed Azure DevOps API responses
+
+4. **Overflow Check Order in Token Aggregation** (MEDIUM)
+   - Changed check from AFTER to BEFORE addition in `aggregate_results`
+   - Prevents value from temporarily exceeding MAX_AGGREGATED_TOKENS/MAX_AGGREGATED_COST
+   - Improved logging to show both current value and value being added
+
+**Files Changed:**
+- `src/services/response_cache.py` - Path validation order fix
+- `src/services/feedback_tracker.py` - Per-thread error handling + properties validation
+- `src/models/review_result.py` - Overflow check order fix
+- `src/utils/config.py` - Version bump to 2.6.37
+
+**Dependency Verification:**
+All dependencies verified current for 2025 via web search:
+- Azure SDKs (azure-functions, azure-identity, azure-keyvault-secrets, azure-data-tables)
+- OpenAI SDK patterns (AsyncAzureOpenAI)
+- Python async patterns (asyncio.to_thread)
+- Pydantic v2, tenacity, structlog, tiktoken
+- Azure DevOps REST API v7.1 (still current, v7.2 is preview only)
+
+---
+
 ## [2.6.36] - 2025-12-08
 
 ### Fixed - Second Round Bug Fixes from Code Review

@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.6.36 - Fixed path validation for Azure DevOps root-relative paths
+Version: 2.6.37 - Fixed path validation order for Azure DevOps paths
 """
 import asyncio
 import json
@@ -18,7 +18,7 @@ from src.utils.table_storage import (
     get_table_client,
     ensure_table_exists,
     sanitize_odata_value,
-    query_entities_paginated
+    query_entities_paginated,
 )
 from src.utils.config import get_settings
 from src.utils.constants import (
@@ -89,8 +89,7 @@ class ResponseCache:
         with ResponseCache._write_lock:
             # Clean old timestamps
             ResponseCache._write_timestamps = [
-                ts for ts in ResponseCache._write_timestamps
-                if ts > window_start
+                ts for ts in ResponseCache._write_timestamps if ts > window_start
             ]
 
             # Check rate limit
@@ -98,7 +97,7 @@ class ResponseCache:
                 logger.warning(
                     "storage_write_rate_limited",
                     writes_in_window=len(ResponseCache._write_timestamps),
-                    max_allowed=CACHE_MAX_WRITES_PER_MINUTE
+                    max_allowed=CACHE_MAX_WRITES_PER_MINUTE,
                 )
                 return False
 
@@ -129,47 +128,53 @@ class ResponseCache:
             return False
 
         # Check for null bytes
-        if '\x00' in file_path:
+        if "\x00" in file_path:
             return False
+
+        # Azure DevOps returns root-relative paths starting with '/'
+        # Strip leading slash first before other checks
+        path_to_check = (
+            file_path.lstrip("/") if file_path.startswith("/") else file_path
+        )
 
         # Decode URL encoding to prevent bypass
         try:
-            decoded_path = unquote(file_path)
+            decoded_path = unquote(path_to_check)
         except Exception:
             return False
 
-        # Check for absolute paths (should be relative)
-        if os.path.isabs(file_path) or os.path.isabs(decoded_path):
+        # Check for absolute paths (should be relative after stripping)
+        if os.path.isabs(path_to_check) or os.path.isabs(decoded_path):
             return False
 
         # Check for suspicious patterns in BOTH original and decoded paths
         # This prevents bypassing checks with URL encoding
         suspicious_patterns = [
-            '../',
-            '..\\',
-            '/etc/',
-            '/proc/',
-            'c:\\',
-            '\\windows\\',
-            '/dev/',
-            '/sys/',
-            '~/',
+            "../",
+            "..\\",
+            "/etc/",
+            "/proc/",
+            "c:\\",
+            "\\windows\\",
+            "/dev/",
+            "/sys/",
+            "~/",
         ]
 
-        path_lower = file_path.lower()
+        path_lower = path_to_check.lower()
         decoded_lower = decoded_path.lower()
         for pattern in suspicious_patterns:
             if pattern in path_lower or pattern in decoded_lower:
                 return False
 
         # Check for control characters and Unicode tricks
-        for char in file_path:
-            if ord(char) < 32 or char in ['<', '>', '|', '\x7f']:
+        for char in path_to_check:
+            if ord(char) < 32 or char in ["<", ">", "|", "\x7f"]:
                 return False
 
         # Normalize the path and check for traversal
         try:
-            normalized = os.path.normpath(file_path)
+            normalized = os.path.normpath(path_to_check)
             normalized_decoded = os.path.normpath(decoded_path)
 
             # Check for path traversal patterns in both
@@ -177,22 +182,20 @@ class ResponseCache:
                 parts = Path(norm_path).parts
 
                 # Check for '..' in any part
-                if '..' in parts:
+                if ".." in parts:
                     return False
 
                 # Check for empty parts (e.g., '//' in path)
-                if '' in parts:
+                if "" in parts:
                     return False
 
-                # Check if normalized path is absolute (after stripping leading /)
-                # v2.6.36: Azure DevOps returns root-relative paths starting with '/'
-                # Strip them before checking, consistent with pr_webhook.py
-                norm_path_stripped = norm_path.lstrip('/\\')
-                if os.path.isabs(norm_path_stripped):
+                # Check if normalized path is absolute
+                # (Leading slashes already stripped at function start)
+                if os.path.isabs(norm_path):
                     return False
 
                 # Additional check: ensure normalized path doesn't escape current directory
-                if norm_path.startswith('..'):
+                if norm_path.startswith(".."):
                     return False
 
         except (ValueError, OSError):
@@ -201,10 +204,7 @@ class ResponseCache:
         return True
 
     async def get_cached_review(
-        self,
-        repository: str,
-        diff_content: str,
-        file_path: str
+        self, repository: str, diff_content: str, file_path: str
     ) -> Optional[ReviewResult]:
         """
         Get cached review result if available.
@@ -235,11 +235,11 @@ class ResponseCache:
                 entity = await asyncio.to_thread(
                     table_client.get_entity,
                     partition_key=repository,
-                    row_key=content_hash
+                    row_key=content_hash,
                 )
 
                 # Check if cache entry is still valid
-                expires_at = entity.get('expires_at')
+                expires_at = entity.get("expires_at")
                 if isinstance(expires_at, str):
                     expires_at = datetime.fromisoformat(expires_at)
 
@@ -252,13 +252,13 @@ class ResponseCache:
                         repository=repository,
                         file_path=file_path,
                         content_hash=content_hash,
-                        expired_at=expires_at
+                        expired_at=expires_at,
                     )
                     # v2.6.3: Delete expired entry (non-blocking)
                     await asyncio.to_thread(
                         table_client.delete_entity,
                         partition_key=repository,
-                        row_key=content_hash
+                        row_key=content_hash,
                     )
                     return None
 
@@ -268,23 +268,21 @@ class ResponseCache:
                     repository=repository,
                     file_path=file_path,
                     content_hash=content_hash,
-                    created_at=entity.get('created_at'),
-                    hit_count=entity.get('hit_count', 1),
-                    tokens_saved=entity.get('tokens_used', 0),
-                    cost_saved=entity.get('estimated_cost', 0)
+                    created_at=entity.get("created_at"),
+                    hit_count=entity.get("hit_count", 1),
+                    tokens_saved=entity.get("tokens_used", 0),
+                    cost_saved=entity.get("estimated_cost", 0),
                 )
 
                 # Update hit count and last accessed time (v2.6.3: non-blocking)
-                entity['hit_count'] = entity.get('hit_count', 1) + 1
-                entity['last_accessed_at'] = now
+                entity["hit_count"] = entity.get("hit_count", 1) + 1
+                entity["last_accessed_at"] = now
                 await asyncio.to_thread(
-                    table_client.update_entity,
-                    entity,
-                    mode='merge'
+                    table_client.update_entity, entity, mode="merge"
                 )
 
                 # Deserialize review result
-                review_json = entity.get('review_result_json', '{}')
+                review_json = entity.get("review_result_json", "{}")
                 review_data = json.loads(review_json)
 
                 # Reconstruct ReviewResult
@@ -294,12 +292,15 @@ class ResponseCache:
 
             except Exception as e:
                 # Cache miss (entity not found)
-                if "ResourceNotFound" in str(type(e).__name__) or "not found" in str(e).lower():
+                if (
+                    "ResourceNotFound" in str(type(e).__name__)
+                    or "not found" in str(e).lower()
+                ):
                     logger.debug(
                         "cache_miss",
                         repository=repository,
                         file_path=file_path,
-                        content_hash=content_hash
+                        content_hash=content_hash,
                     )
                     return None
                 else:
@@ -309,17 +310,14 @@ class ResponseCache:
                         repository=repository,
                         file_path=file_path,
                         error=str(e),
-                        error_type=type(e).__name__
+                        error_type=type(e).__name__,
                     )
                     return None
 
         except Exception as e:
             # Critical error - don't block review
             logger.exception(
-                "cache_error",
-                repository=repository,
-                file_path=file_path,
-                error=str(e)
+                "cache_error", repository=repository, file_path=file_path, error=str(e)
             )
             return None
 
@@ -332,7 +330,7 @@ class ResponseCache:
         review_result: ReviewResult,
         tokens_used: int,
         estimated_cost: float,
-        model_used: str
+        model_used: str,
     ) -> None:
         """
         Cache a review result.
@@ -358,7 +356,7 @@ class ResponseCache:
                 logger.warning(
                     "cache_write_skipped_rate_limit",
                     repository=repository,
-                    file_path=file_path
+                    file_path=file_path,
                 )
                 return
 
@@ -376,23 +374,20 @@ class ResponseCache:
                 tokens_used=tokens_used,
                 estimated_cost=estimated_cost,
                 model_used=model_used,
-                ttl_days=self.ttl_days
+                ttl_days=self.ttl_days,
             )
 
             # v2.6.2: Store with timeout to prevent hanging on slow storage
             try:
                 await asyncio.wait_for(
                     asyncio.to_thread(
-                        table_client.upsert_entity,
-                        cache_entity.to_table_entity()
+                        table_client.upsert_entity, cache_entity.to_table_entity()
                     ),
-                    timeout=5.0  # 5 second timeout for cache writes
+                    timeout=5.0,  # 5 second timeout for cache writes
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "cache_write_timeout",
-                    repository=repository,
-                    file_path=file_path
+                    "cache_write_timeout", repository=repository, file_path=file_path
                 )
                 return  # Don't fail the review if caching times out
 
@@ -403,7 +398,7 @@ class ResponseCache:
                 content_hash=cache_entity.diff_hash,
                 tokens=tokens_used,
                 cost=estimated_cost,
-                expires_at=cache_entity.expires_at
+                expires_at=cache_entity.expires_at,
             )
 
         except Exception as e:
@@ -413,13 +408,11 @@ class ResponseCache:
                 repository=repository,
                 file_path=file_path,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
 
     async def invalidate_cache(
-        self,
-        repository: str,
-        file_path: Optional[str] = None
+        self, repository: str, file_path: Optional[str] = None
     ) -> int:
         """
         Invalidate cache entries.
@@ -447,13 +440,19 @@ class ResponseCache:
 
                 # v2.6.4: Non-blocking pagination
                 entities = await asyncio.to_thread(
-                    lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+                    lambda: list(
+                        query_entities_paginated(
+                            table_client,
+                            query_filter=query_filter,
+                            page_size=TABLE_STORAGE_BATCH_SIZE,
+                        )
+                    )
                 )
                 for entity in entities:
                     await asyncio.to_thread(
                         table_client.delete_entity,
                         partition_key=repository,
-                        row_key=entity['RowKey']
+                        row_key=entity["RowKey"],
                     )
                     count += 1
 
@@ -461,7 +460,7 @@ class ResponseCache:
                     "cache_invalidated_file",
                     repository=repository,
                     file_path=file_path,
-                    entries_deleted=count
+                    entries_deleted=count,
                 )
             else:
                 # Invalidate entire repository
@@ -470,33 +469,39 @@ class ResponseCache:
 
                 # v2.6.4: Non-blocking pagination
                 entities = await asyncio.to_thread(
-                    lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+                    lambda: list(
+                        query_entities_paginated(
+                            table_client,
+                            query_filter=query_filter,
+                            page_size=TABLE_STORAGE_BATCH_SIZE,
+                        )
+                    )
                 )
                 for entity in entities:
                     await asyncio.to_thread(
                         table_client.delete_entity,
                         partition_key=repository,
-                        row_key=entity['RowKey']
+                        row_key=entity["RowKey"],
                     )
                     count += 1
 
                 logger.info(
                     "cache_invalidated_repository",
                     repository=repository,
-                    entries_deleted=count
+                    entries_deleted=count,
                 )
 
             return count
 
         except Exception as e:
             logger.exception(
-                "cache_invalidation_failed",
-                repository=repository,
-                error=str(e)
+                "cache_invalidation_failed", repository=repository, error=str(e)
             )
             return 0
 
-    async def get_cache_statistics(self, repository: Optional[str] = None) -> Dict[str, Any]:
+    async def get_cache_statistics(
+        self, repository: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Get cache statistics.
 
@@ -529,21 +534,27 @@ class ResponseCache:
 
             # v2.6.4: Non-blocking pagination
             entities = await asyncio.to_thread(
-                lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+                lambda: list(
+                    query_entities_paginated(
+                        table_client,
+                        query_filter=query_filter,
+                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    )
+                )
             )
             for entity in entities:
                 total_entries += 1
-                hit_count = entity.get('hit_count', 1)
+                hit_count = entity.get("hit_count", 1)
                 total_hits += hit_count
 
                 # Calculate savings (exclude initial store)
-                tokens = entity.get('tokens_used', 0)
-                cost = entity.get('estimated_cost', 0)
+                tokens = entity.get("tokens_used", 0)
+                cost = entity.get("estimated_cost", 0)
                 total_tokens_saved += tokens * (hit_count - 1)
                 total_cost_saved += cost * (hit_count - 1)
 
                 # Check if expired
-                expires_at = entity.get('expires_at')
+                expires_at = entity.get("expires_at")
                 if isinstance(expires_at, str):
                     expires_at = datetime.fromisoformat(expires_at)
                 if expires_at and expires_at < now:
@@ -561,11 +572,17 @@ class ResponseCache:
                     "cache_statistics_inconsistency",
                     total_hits=total_hits,
                     total_entries=total_entries,
-                    message="total_hits < total_entries indicates data inconsistency"
+                    message="total_hits < total_entries indicates data inconsistency",
                 )
-            cache_hits = max(0, total_hits - total_entries)  # Subtract initial stores, ensure non-negative
-            avg_reuse_per_entry = (cache_hits / total_entries) if total_entries > 0 else 0.0
-            cache_efficiency_percent = (reused_entries / total_entries * 100.0) if total_entries > 0 else 0.0
+            cache_hits = max(
+                0, total_hits - total_entries
+            )  # Subtract initial stores, ensure non-negative
+            avg_reuse_per_entry = (
+                (cache_hits / total_entries) if total_entries > 0 else 0.0
+            )
+            cache_efficiency_percent = (
+                (reused_entries / total_entries * 100.0) if total_entries > 0 else 0.0
+            )
 
             return {
                 "repository": repository or "all",
@@ -578,7 +595,7 @@ class ResponseCache:
                 "avg_reuse_per_entry": round(avg_reuse_per_entry, 2),
                 "tokens_saved": total_tokens_saved,
                 "cost_saved_usd": round(total_cost_saved, 4),
-                "analyzed_at": datetime.now(timezone.utc).isoformat()
+                "analyzed_at": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:
@@ -587,7 +604,7 @@ class ResponseCache:
                 "error": str(e),
                 "total_cache_entries": 0,
                 "tokens_saved": 0,
-                "cost_saved_usd": 0.0
+                "cost_saved_usd": 0.0,
             }
 
     async def cleanup_expired_entries(self) -> int:
@@ -609,10 +626,14 @@ class ResponseCache:
 
             # v2.6.4: Non-blocking pagination
             entities = await asyncio.to_thread(
-                lambda: list(query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE))
+                lambda: list(
+                    query_entities_paginated(
+                        table_client, page_size=TABLE_STORAGE_BATCH_SIZE
+                    )
+                )
             )
             for entity in entities:
-                expires_at = entity.get('expires_at')
+                expires_at = entity.get("expires_at")
                 if isinstance(expires_at, str):
                     expires_at = datetime.fromisoformat(expires_at)
 
@@ -620,15 +641,12 @@ class ResponseCache:
                     # v2.6.4: Non-blocking delete
                     await asyncio.to_thread(
                         table_client.delete_entity,
-                        partition_key=entity['PartitionKey'],
-                        row_key=entity['RowKey']
+                        partition_key=entity["PartitionKey"],
+                        row_key=entity["RowKey"],
                     )
                     deleted_count += 1
 
-            logger.info(
-                "cache_cleanup_completed",
-                deleted_count=deleted_count
-            )
+            logger.info("cache_cleanup_completed", deleted_count=deleted_count)
 
             return deleted_count
 

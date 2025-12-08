@@ -4,7 +4,7 @@ Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
 
-Version: 2.6.36 - OData datetime format consistency
+Version: 2.6.37 - Added per-thread error handling and properties validation
 """
 import asyncio
 import uuid
@@ -18,7 +18,7 @@ from src.utils.table_storage import (
     get_table_client,
     ensure_table_exists,
     sanitize_odata_value,
-    query_entities_paginated
+    query_entities_paginated,
 )
 from src.models.feedback import FeedbackEntity, FeedbackType
 from src.services.azure_devops import AzureDevOpsClient
@@ -93,8 +93,8 @@ class FeedbackTracker:
         logger.info("feedback_collection_started", hours=hours)
 
         # v2.6.3: Run blocking table operations in thread pool
-        await asyncio.to_thread(ensure_table_exists, 'feedback')
-        table_client = get_table_client('feedback')
+        await asyncio.to_thread(ensure_table_exists, "feedback")
+        table_client = get_table_client("feedback")
 
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         feedback_collected = 0
@@ -102,8 +102,8 @@ class FeedbackTracker:
         try:
             # Get recent reviews from history to find relevant PRs
             # v2.6.3: Ensure reviewhistory table exists
-            await asyncio.to_thread(ensure_table_exists, 'reviewhistory')
-            history_table = get_table_client('reviewhistory')
+            await asyncio.to_thread(ensure_table_exists, "reviewhistory")
+            history_table = get_table_client("reviewhistory")
 
             # Query reviews from the last N hours
             # Note: reviewed_at is stored as ISO string
@@ -112,37 +112,38 @@ class FeedbackTracker:
 
             # v2.6.3: Use pagination with non-blocking thread pool
             recent_reviews = await asyncio.to_thread(
-                lambda: list(query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+                lambda: list(
+                    query_entities_paginated(
+                        history_table,
+                        query_filter=query_filter,
+                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    )
+                )
             )
 
-            logger.info(
-                "recent_reviews_found",
-                count=len(recent_reviews),
-                hours=hours
-            )
+            logger.info("recent_reviews_found", count=len(recent_reviews), hours=hours)
 
             # For each recent review, check for feedback
             for review in recent_reviews:
                 try:
                     feedback_count = await self._collect_pr_feedback(
-                        review,
-                        table_client
+                        review, table_client
                     )
                     feedback_collected += feedback_count
 
                 except Exception as e:
                     logger.warning(
                         "pr_feedback_collection_failed",
-                        pr_id=review.get('pr_id'),
-                        repository=review.get('repository'),
-                        error=str(e)
+                        pr_id=review.get("pr_id"),
+                        repository=review.get("repository"),
+                        error=str(e),
                     )
                     continue
 
             logger.info(
                 "feedback_collection_completed",
                 feedback_entries=feedback_collected,
-                reviews_checked=len(recent_reviews)
+                reviews_checked=len(recent_reviews),
             )
 
             return feedback_collected
@@ -152,15 +153,11 @@ class FeedbackTracker:
                 "feedback_collection_error",
                 hours=hours,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
             raise
 
-    async def _collect_pr_feedback(
-        self,
-        review: dict,
-        table_client
-    ) -> int:
+    async def _collect_pr_feedback(self, review: dict, table_client) -> int:
         """
         Collect feedback for a specific PR review.
 
@@ -173,12 +170,12 @@ class FeedbackTracker:
         """
         devops = await self._get_devops_client()
 
-        pr_id = review.get('pr_id')
-        repository = review.get('repository')
-        project = review.get('project')
+        pr_id = review.get("pr_id")
+        repository = review.get("repository")
+        project = review.get("project")
 
         if not all([pr_id, repository, project]):
-            logger.warning("missing_pr_metadata", review_id=review.get('RowKey'))
+            logger.warning("missing_pr_metadata", review_id=review.get("RowKey"))
             return 0
 
         feedback_count = 0
@@ -186,57 +183,63 @@ class FeedbackTracker:
         try:
             # Get PR threads/comments
             # Get repository_id from review data - prefer explicit field over PartitionKey
-            repository_id = review.get('repository_id') or review.get('PartitionKey')
+            repository_id = review.get("repository_id") or review.get("PartitionKey")
 
             # Validate repository_id format (Azure DevOps uses UUID format)
             if not repository_id:
                 logger.warning(
-                    "missing_repository_id",
-                    review_id=review.get('RowKey'),
-                    pr_id=pr_id
+                    "missing_repository_id", review_id=review.get("RowKey"), pr_id=pr_id
                 )
                 return 0
 
             # Validate UUID format for repository_id
-            uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            uuid_pattern = (
+                r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            )
             if not re.match(uuid_pattern, repository_id, re.IGNORECASE):
                 logger.warning(
                     "invalid_repository_id_format",
                     repository_id=repository_id[:50] if repository_id else None,
-                    review_id=review.get('RowKey')
+                    review_id=review.get("RowKey"),
                 )
                 return 0
 
             threads = await devops._get_pr_threads(project, repository_id, pr_id)
 
             # Parse issue types from review
-            issue_types = json.loads(review.get('issue_types', '[]'))
+            issue_types = json.loads(review.get("issue_types", "[]"))
 
-            # Process each thread for feedback
+            # Process each thread for feedback (with per-thread error handling)
             for thread in threads:
-                feedback = await self._process_thread_feedback(
-                    thread=thread,
-                    pr_id=pr_id,
-                    repository=repository,
-                    project=project,
-                    review_id=review.get('RowKey'),
-                    issue_types=issue_types
-                )
-
-                if feedback:
-                    # v2.6.3: Non-blocking upsert
-                    await asyncio.to_thread(
-                        table_client.upsert_entity,
-                        feedback.to_table_entity()
+                try:
+                    feedback = await self._process_thread_feedback(
+                        thread=thread,
+                        pr_id=pr_id,
+                        repository=repository,
+                        project=project,
+                        review_id=review.get("RowKey"),
+                        issue_types=issue_types,
                     )
-                    feedback_count += 1
+
+                    if feedback:
+                        # v2.6.3: Non-blocking upsert
+                        await asyncio.to_thread(
+                            table_client.upsert_entity, feedback.to_table_entity()
+                        )
+                        feedback_count += 1
+                except Exception as e:
+                    # Log and continue processing remaining threads
+                    logger.warning(
+                        "thread_feedback_processing_failed",
+                        thread_id=thread.get("id"),
+                        pr_id=pr_id,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                    continue
 
         except Exception as e:
-            logger.warning(
-                "pr_thread_fetch_failed",
-                pr_id=pr_id,
-                error=str(e)
-            )
+            logger.warning("pr_thread_fetch_failed", pr_id=pr_id, error=str(e))
 
         return feedback_count
 
@@ -247,7 +250,7 @@ class FeedbackTracker:
         repository: str,
         project: str,
         review_id: str,
-        issue_types: List[str]
+        issue_types: List[str],
     ) -> Optional[FeedbackEntity]:
         """
         Process a single PR thread for feedback signals.
@@ -263,42 +266,55 @@ class FeedbackTracker:
         Returns:
             FeedbackEntity if feedback found, None otherwise
         """
-        thread_id = thread.get('id')
-        status = thread.get('status', 'unknown').lower()
+        thread_id = thread.get("id")
+        status = thread.get("status", "unknown").lower()
 
         # Check for resolved or won't fix status
         feedback_type = None
         is_positive = False
 
-        if status == 'fixed' or status == 'closed':
+        if status == "fixed" or status == "closed":
             feedback_type = FeedbackType.THREAD_RESOLVED
             is_positive = True
-        elif status == 'wontfix':
+        elif status == "wontfix":
             feedback_type = FeedbackType.THREAD_WONT_FIX
             is_positive = False
 
         # Check for comment reactions (if available in thread properties)
-        properties = thread.get('properties', {})
+        properties = thread.get("properties", {})
+
+        # Validate properties is a dict (malformed API response protection)
+        if not isinstance(properties, dict):
+            logger.warning("invalid_properties_structure", thread_id=thread.get("id"))
+            properties = {}
 
         # Azure DevOps may include reaction counts
-        if 'thumbsUpCount' in properties and int(properties['thumbsUpCount']) > 0:
-            feedback_type = FeedbackType.COMMENT_REACTION_UP
-            is_positive = True
-        elif 'thumbsDownCount' in properties and int(properties['thumbsDownCount']) > 0:
-            feedback_type = FeedbackType.COMMENT_REACTION_DOWN
-            is_positive = False
+        try:
+            if "thumbsUpCount" in properties and int(properties["thumbsUpCount"]) > 0:
+                feedback_type = FeedbackType.COMMENT_REACTION_UP
+                is_positive = True
+            elif (
+                "thumbsDownCount" in properties
+                and int(properties["thumbsDownCount"]) > 0
+            ):
+                feedback_type = FeedbackType.COMMENT_REACTION_DOWN
+                is_positive = False
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "invalid_reaction_count", thread_id=thread.get("id"), error=str(e)
+            )
 
         if feedback_type is None:
             return None
 
         # Extract issue details from thread comments
         # The first comment usually contains our AI feedback
-        comments = thread.get('comments', [])
+        comments = thread.get("comments", [])
         if not comments:
             return None
 
         first_comment = comments[0]
-        comment_text = first_comment.get('content', '')
+        comment_text = first_comment.get("content", "")
 
         # Try to extract issue type from comment
         # (Our comments should include this info)
@@ -312,24 +328,26 @@ class FeedbackTracker:
                 break
 
         # Extract file path from thread context
-        thread_context = thread.get('threadContext', {})
-        file_path = thread_context.get('filePath', 'unknown')
+        thread_context = thread.get("threadContext", {})
+        file_path = thread_context.get("filePath", "unknown")
 
         # Get author
-        author = first_comment.get('author', {}).get('displayName', 'unknown')
+        author = first_comment.get("author", {}).get("displayName", "unknown")
 
         # Parse published date safely
-        published_date_str = first_comment.get('publishedDate')
+        published_date_str = first_comment.get("publishedDate")
         try:
             if published_date_str and isinstance(published_date_str, str):
-                issue_created_at = datetime.fromisoformat(published_date_str.replace('Z', '+00:00'))
+                issue_created_at = datetime.fromisoformat(
+                    published_date_str.replace("Z", "+00:00")
+                )
             else:
                 issue_created_at = datetime.now(timezone.utc)
         except (ValueError, TypeError) as e:
             logger.warning(
                 "invalid_published_date",
                 published_date=published_date_str,
-                error=str(e)
+                error=str(e),
             )
             issue_created_at = datetime.now(timezone.utc)
 
@@ -348,7 +366,7 @@ class FeedbackTracker:
             project=project,
             author=author,
             issue_created_at=issue_created_at,
-            review_id=review_id
+            review_id=review_id,
         )
 
         return feedback
@@ -381,8 +399,8 @@ class FeedbackTracker:
         logger.info("learning_context_requested", repository=repository)
 
         # v2.6.3: Run blocking table operations in thread pool
-        await asyncio.to_thread(ensure_table_exists, 'feedback')
-        table_client = get_table_client('feedback')
+        await asyncio.to_thread(ensure_table_exists, "feedback")
+        table_client = get_table_client("feedback")
 
         try:
             # Query all feedback for this repository
@@ -391,7 +409,13 @@ class FeedbackTracker:
 
             # v2.6.3: Use pagination with non-blocking thread pool
             feedback_entries = await asyncio.to_thread(
-                lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+                lambda: list(
+                    query_entities_paginated(
+                        table_client,
+                        query_filter=query_filter,
+                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    )
+                )
             )
 
             if not feedback_entries:
@@ -401,7 +425,7 @@ class FeedbackTracker:
                     "low_value_issue_types": [],
                     "positive_feedback_rate": 0.0,
                     "total_feedback_count": 0,
-                    "issue_type_stats": {}
+                    "issue_type_stats": {},
                 }
 
             # Analyze feedback by issue type
@@ -410,8 +434,8 @@ class FeedbackTracker:
             total_negative = 0
 
             for entry in feedback_entries:
-                issue_type = entry.get('issue_type', 'unknown')
-                is_positive = entry.get('is_positive', False)
+                issue_type = entry.get("issue_type", "unknown")
+                is_positive = entry.get("is_positive", False)
 
                 if is_positive:
                     issue_stats[issue_type]["positive"] += 1
@@ -430,24 +454,32 @@ class FeedbackTracker:
             # Identify high-value and low-value issue types
             # Require minimum samples to be statistically meaningful
             high_value = [
-                itype for itype, rate in issue_rates.items()
-                if rate > FEEDBACK_HIGH_VALUE_THRESHOLD and (issue_stats[itype]["positive"] + issue_stats[itype]["negative"]) >= FEEDBACK_MIN_SAMPLES
+                itype
+                for itype, rate in issue_rates.items()
+                if rate > FEEDBACK_HIGH_VALUE_THRESHOLD
+                and (issue_stats[itype]["positive"] + issue_stats[itype]["negative"])
+                >= FEEDBACK_MIN_SAMPLES
             ]
 
             low_value = [
-                itype for itype, rate in issue_rates.items()
-                if rate < FEEDBACK_LOW_VALUE_THRESHOLD and (issue_stats[itype]["positive"] + issue_stats[itype]["negative"]) >= FEEDBACK_MIN_SAMPLES
+                itype
+                for itype, rate in issue_rates.items()
+                if rate < FEEDBACK_LOW_VALUE_THRESHOLD
+                and (issue_stats[itype]["positive"] + issue_stats[itype]["negative"])
+                >= FEEDBACK_MIN_SAMPLES
             ]
 
             total_feedback = total_positive + total_negative
-            positive_rate = total_positive / total_feedback if total_feedback > 0 else 0.0
+            positive_rate = (
+                total_positive / total_feedback if total_feedback > 0 else 0.0
+            )
 
             context = {
                 "high_value_issue_types": sorted(high_value),
                 "low_value_issue_types": sorted(low_value),
                 "positive_feedback_rate": round(positive_rate, 3),
                 "total_feedback_count": total_feedback,
-                "issue_type_stats": dict(issue_stats)
+                "issue_type_stats": dict(issue_stats),
             }
 
             logger.info(
@@ -455,7 +487,7 @@ class FeedbackTracker:
                 repository=repository,
                 high_value_count=len(high_value),
                 low_value_count=len(low_value),
-                positive_rate=positive_rate
+                positive_rate=positive_rate,
             )
 
             return context
@@ -465,7 +497,7 @@ class FeedbackTracker:
                 "learning_context_error",
                 repository=repository,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
             # Return empty context on error
             return {
@@ -474,7 +506,7 @@ class FeedbackTracker:
                 "positive_feedback_rate": 0.0,
                 "total_feedback_count": 0,
                 "issue_type_stats": {},
-                "error": str(e)
+                "error": str(e),
             }
 
     async def get_feedback_summary(self, days: int = PATTERN_ANALYSIS_DAYS) -> Dict:
@@ -494,45 +526,55 @@ class FeedbackTracker:
                 "error": "days must be an integer between 1 and 365",
                 "total_feedback": 0,
                 "positive_feedback": 0,
-                "negative_feedback": 0
+                "negative_feedback": 0,
             }
 
         # v2.6.3: Run blocking table operations in thread pool
-        await asyncio.to_thread(ensure_table_exists, 'feedback')
-        table_client = get_table_client('feedback')
+        await asyncio.to_thread(ensure_table_exists, "feedback")
+        table_client = get_table_client("feedback")
 
         cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
 
         try:
             # Query feedback from last N days
             # Use OData datetime format for consistency across codebase
-            query_filter = f"feedback_received_at ge datetime'{cutoff_time.isoformat()}'"
+            query_filter = (
+                f"feedback_received_at ge datetime'{cutoff_time.isoformat()}'"
+            )
 
             # v2.6.3: Use pagination with non-blocking thread pool
             feedback_entries = await asyncio.to_thread(
-                lambda: list(query_entities_paginated(table_client, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE))
+                lambda: list(
+                    query_entities_paginated(
+                        table_client,
+                        query_filter=query_filter,
+                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    )
+                )
             )
 
             total_count = len(feedback_entries)
-            positive_count = sum(1 for e in feedback_entries if e.get('is_positive'))
+            positive_count = sum(1 for e in feedback_entries if e.get("is_positive"))
             negative_count = total_count - positive_count
 
             # Group by repository
-            by_repository = Counter(e.get('repository') for e in feedback_entries)
+            by_repository = Counter(e.get("repository") for e in feedback_entries)
 
             # Group by feedback type
-            by_type = Counter(e.get('feedback_type') for e in feedback_entries)
+            by_type = Counter(e.get("feedback_type") for e in feedback_entries)
 
             return {
                 "days": days,
                 "total_feedback": total_count,
                 "positive_feedback": positive_count,
                 "negative_feedback": negative_count,
-                "positive_rate": positive_count / total_count if total_count > 0 else 0.0,
+                "positive_rate": (
+                    positive_count / total_count if total_count > 0 else 0.0
+                ),
                 "by_repository": dict(by_repository),
                 "by_type": dict(by_type),
                 "period_start": cutoff_time.isoformat(),
-                "period_end": datetime.now(timezone.utc).isoformat()
+                "period_end": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:
