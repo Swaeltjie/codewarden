@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.6.23 - GPT-5 parameter compatibility fixes
+Version: 2.6.25 - Fixed diff generation for unidiff compatibility
 """
 
 # =============================================================================
@@ -44,10 +44,12 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 AZURE_DEVOPS_TIMEOUT = 30
 
 # Timeout for establishing connection to AI service
-AI_CLIENT_TIMEOUT = 60
+# GPT-5 with large prompts (14K+ tokens) needs extended timeout
+AI_CLIENT_TIMEOUT = 180
 
 # Timeout for AI API request completion (includes response generation)
-AI_REQUEST_TIMEOUT = 90
+# GPT-5 with large prompts (14K+ tokens) needs extended timeout
+AI_REQUEST_TIMEOUT = 180
 
 # =============================================================================
 # HTTP CONNECTION POOL SETTINGS

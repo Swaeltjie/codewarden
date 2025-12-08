@@ -161,6 +161,7 @@ class ReviewHistoryEntity(BaseModel):
 
     # Context
     repository: str = Field(..., max_length=500, description="Repository name")
+    repository_id: Optional[str] = Field(None, max_length=100, description="Repository UUID for API calls")
     project: str = Field(..., max_length=500, description="Project name")
 
     # Performance metrics
@@ -237,7 +238,8 @@ class ReviewHistoryEntity(BaseModel):
         review_result,
         pr_data: dict,
         repository: str,
-        project: str
+        project: str,
+        repository_id: Optional[str] = None
     ) -> "ReviewHistoryEntity":
         """
         Create from ReviewResult and PR data.
@@ -247,6 +249,7 @@ class ReviewHistoryEntity(BaseModel):
             pr_data: PR metadata dict
             repository: Repository name
             project: Project name
+            repository_id: Repository UUID for feedback collection
 
         Returns:
             ReviewHistoryEntity instance
@@ -278,6 +281,7 @@ class ReviewHistoryEntity(BaseModel):
             issue_types=json.dumps(issue_types),
             files_reviewed=json.dumps(files),
             repository=repository,
+            repository_id=repository_id,
             project=project,
             tokens_used=review_result.tokens_used,
             estimated_cost=review_result.estimated_cost,

@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.6.20 - Fixed diffs API: use project name (not UUID) + plain branch names
+Version: 2.6.32 - URL encoding for all Azure DevOps API endpoints
 """
 import aiohttp
 import asyncio
@@ -228,12 +228,15 @@ class AzureDevOpsClient:
             DevOpsAuthError: If authentication fails
             DevOpsRateLimitError: If rate limited
         """
+        # v2.6.32: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        encoded_project = quote(project_id, safe='')
+
         url = (
-            f"{self.base_url}/{project_id}/_apis/git/repositories/"
+            f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
             f"{repository_id}/pullRequests/{pr_id}"
             f"?api-version={self.api_version}"
         )
-        
+
         logger.info(
             "devops_get_pr_details",
             project_id=project_id,
@@ -313,28 +316,31 @@ class AzureDevOpsClient:
         Returns:
             List of file changes with metadata
         """
+        # v2.6.32: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        encoded_project = quote(project_id, safe='')
+
         # Get iterations to find commits
         url = (
-            f"{self.base_url}/{project_id}/_apis/git/repositories/"
+            f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
             f"{repository_id}/pullRequests/{pr_id}/iterations"
             f"?api-version={self.api_version}"
         )
-        
+
         session = await self._get_session()
         async with session.get(url) as response:
             response.raise_for_status()
             iterations = await response.json()
-        
+
         if not iterations.get('value'):
             return []
-        
+
         # Get the latest iteration
         latest_iteration = iterations['value'][-1]
         iteration_id = latest_iteration['id']
-        
+
         # Get changes in this iteration
         url = (
-            f"{self.base_url}/{project_id}/_apis/git/repositories/"
+            f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
             f"{repository_id}/pullRequests/{pr_id}/iterations/{iteration_id}/changes"
             f"?api-version={self.api_version}"
         )
@@ -535,15 +541,21 @@ class AzureDevOpsClient:
         is_commit_sha = len(version_ref) == 40 and all(c in '0123456789abcdef' for c in version_ref.lower())
         version_type = "commit" if is_commit_sha else "branch"
 
+        # v2.6.24: CRITICAL - Must include download=true OR use Accept header
+        # Without this, Azure DevOps returns JSON metadata instead of file content
+        # v2.6.29: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        encoded_project = quote(project_id, safe='')
         url = (
-            f"{self.base_url}/{project_id}/_apis/git/repositories/{repository_id}/items"
+            f"{self.base_url}/{encoded_project}/_apis/git/repositories/{repository_id}/items"
             f"?path={file_path}&versionType={version_type}&version={version_ref}"
-            f"&api-version={self.api_version}"
+            f"&download=true&api-version={self.api_version}"
         )
 
         try:
             session = await self._get_session()
-            async with session.get(url) as response:
+            # Override Accept header to get raw content (not JSON)
+            headers = {"Accept": "text/plain, application/octet-stream, */*"}
+            async with session.get(url, headers=headers) as response:
                 if response.status == 404:
                     return None
                 response.raise_for_status()
@@ -569,10 +581,30 @@ class AzureDevOpsClient:
             content: Full file content
 
         Returns:
-            Unified diff string
+            Unified diff string compatible with unidiff parser
         """
-        lines = content.splitlines()
+        # v2.6.25: Normalize line endings to LF for consistent diff parsing
+        # Windows files may have CRLF which can cause hunk count mismatches
+        normalized_content = content.replace('\r\n', '\n').replace('\r', '\n')
+
+        # Handle trailing newline - don't count it as an empty line
+        # but track if file ends with newline for proper diff format
+        has_trailing_newline = normalized_content.endswith('\n')
+        if has_trailing_newline:
+            normalized_content = normalized_content[:-1]
+
+        # Split into lines
+        lines = normalized_content.split('\n') if normalized_content else []
         line_count = len(lines)
+
+        # Handle empty file case
+        if line_count == 0:
+            return (
+                f"diff --git a{file_path} b{file_path}\n"
+                "new file mode 100644\n"
+                "--- /dev/null\n"
+                f"+++ b{file_path}\n"
+            )
 
         diff_lines = [
             f"diff --git a{file_path} b{file_path}",
@@ -586,7 +618,12 @@ class AzureDevOpsClient:
         for line in lines:
             diff_lines.append(f"+{line}")
 
-        return "\n".join(diff_lines)
+        # Add newline at end of diff for proper format
+        # If file doesn't end with newline, add the marker
+        if not has_trailing_newline:
+            diff_lines.append("\\ No newline at end of file")
+
+        return "\n".join(diff_lines) + "\n"
 
     def _generate_delete_diff(self, file_path: str, content: str) -> str:
         """
@@ -599,10 +636,28 @@ class AzureDevOpsClient:
             content: Full file content before deletion
 
         Returns:
-            Unified diff string
+            Unified diff string compatible with unidiff parser
         """
-        lines = content.splitlines()
+        # v2.6.25: Normalize line endings to LF for consistent diff parsing
+        normalized_content = content.replace('\r\n', '\n').replace('\r', '\n')
+
+        # Handle trailing newline
+        has_trailing_newline = normalized_content.endswith('\n')
+        if has_trailing_newline:
+            normalized_content = normalized_content[:-1]
+
+        # Split into lines
+        lines = normalized_content.split('\n') if normalized_content else []
         line_count = len(lines)
+
+        # Handle empty file case
+        if line_count == 0:
+            return (
+                f"diff --git a{file_path} b{file_path}\n"
+                "deleted file mode 100644\n"
+                f"--- a{file_path}\n"
+                "+++ /dev/null\n"
+            )
 
         diff_lines = [
             f"diff --git a{file_path} b{file_path}",
@@ -616,7 +671,11 @@ class AzureDevOpsClient:
         for line in lines:
             diff_lines.append(f"-{line}")
 
-        return "\n".join(diff_lines)
+        # Add newline at end of diff for proper format
+        if not has_trailing_newline:
+            diff_lines.append("\\ No newline at end of file")
+
+        return "\n".join(diff_lines) + "\n"
 
     def _generate_edit_diff(self, file_path: str, old_content: str, new_content: str) -> str:
         """
@@ -869,8 +928,11 @@ class AzureDevOpsClient:
             # Truncate comment with warning
             comment = comment[:MAX_COMMENT_LENGTH - 100] + "\n\n... (Comment truncated due to length limit)"
 
+        # v2.6.32: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        encoded_project = quote(project_id, safe='')
+
         url = (
-            f"{self.base_url}/{project_id}/_apis/git/repositories/"
+            f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
             f"{repository_id}/pullRequests/{pr_id}/threads"
             f"?api-version={self.api_version}"
         )
@@ -944,12 +1006,15 @@ class AzureDevOpsClient:
         Returns:
             Created thread object
         """
+        # v2.6.32: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        encoded_project = quote(project_id, safe='')
+
         url = (
-            f"{self.base_url}/{project_id}/_apis/git/repositories/"
+            f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
             f"{repository_id}/pullRequests/{pr_id}/threads"
             f"?api-version={self.api_version}"
         )
-        
+
         payload = {
             "comments": [
                 {
@@ -1028,8 +1093,11 @@ class AzureDevOpsClient:
         Returns:
             List of thread objects with comments and status
         """
+        # v2.6.31: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        encoded_project = quote(project_id, safe='')
+
         url = (
-            f"{self.base_url}/{project_id}/_apis/git/repositories/"
+            f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
             f"{repository_id}/pullRequests/{pr_id}/threads"
             f"?api-version={self.api_version}"
         )
@@ -1037,7 +1105,8 @@ class AzureDevOpsClient:
         logger.info(
             "devops_fetching_pr_threads",
             pr_id=pr_id,
-            project_id=project_id
+            project_id=project_id,
+            encoded_project=encoded_project
         )
 
         try:

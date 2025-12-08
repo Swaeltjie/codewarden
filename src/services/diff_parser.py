@@ -5,7 +5,7 @@ Git Diff Parser with Diff-Only Analysis
 Parses git diffs to extract only changed sections, dramatically reducing
 token usage and improving review focus.
 
-Version: 2.6.5 - Use centralized constants
+Version: 2.6.26 - Fallback parser for unidiff compatibility
 """
 from typing import List, Optional
 from dataclasses import dataclass
@@ -112,12 +112,14 @@ class DiffParser:
             return sections
             
         except unidiff.errors.UnidiffParseError as e:
-            logger.error(
-                "diff_parse_failed",
+            logger.warning(
+                "unidiff_parse_failed_using_fallback",
                 error=str(e),
                 diff_preview=diff_content[:200]
             )
-            raise ValueError(f"Invalid diff format: {e}")
+            # v2.6.26: Fallback to manual parsing when unidiff fails
+            # This handles generated diffs that unidiff is strict about
+            return self._fallback_parse_diff(diff_content)
     
     def _extract_file_sections(
         self,
@@ -222,6 +224,152 @@ class DiffParser:
             context_after=context_after
         )
     
+    def _fallback_parse_diff(self, diff_content: str) -> List[ChangedSection]:
+        """
+        Fallback diff parser when unidiff fails.
+
+        Handles generated diffs that unidiff is strict about (e.g., hunk line counts).
+        This parser is more lenient and focuses on extracting the essential change info.
+
+        Args:
+            diff_content: Raw git diff content
+
+        Returns:
+            List of ChangedSection objects
+        """
+        sections = []
+        current_file = None
+        current_added = []
+        current_removed = []
+        current_context_before = []
+        current_context_after = []
+        in_hunk = False
+        found_change = False
+        new_start_line = 1
+        old_start_line = 1
+
+        lines = diff_content.split('\n')
+
+        for line in lines:
+            # Detect file header
+            if line.startswith('diff --git'):
+                # Save previous section if exists
+                if current_file and (current_added or current_removed):
+                    sections.append(ChangedSection(
+                        file_path=current_file,
+                        old_start_line=old_start_line,
+                        new_start_line=new_start_line,
+                        context_before=current_context_before[-self.context_lines:],
+                        removed_lines=current_removed,
+                        added_lines=current_added,
+                        context_after=current_context_after[:self.context_lines]
+                    ))
+
+                # Reset for new file
+                current_added = []
+                current_removed = []
+                current_context_before = []
+                current_context_after = []
+                in_hunk = False
+                found_change = False
+                new_start_line = 1
+                old_start_line = 1
+
+                # Extract file path from diff header
+                # Format: diff --git a/path/to/file b/path/to/file
+                parts = line.split(' ')
+                if len(parts) >= 4:
+                    # Use the b/ path (target file)
+                    current_file = parts[-1]
+                    if current_file.startswith('b/'):
+                        current_file = current_file[2:]
+                continue
+
+            # Detect new file in --- line
+            if line.startswith('--- '):
+                continue
+
+            # Detect new file in +++ line
+            if line.startswith('+++ '):
+                if current_file is None:
+                    path = line[4:].strip()
+                    if path.startswith('b/'):
+                        path = path[2:]
+                    if path != '/dev/null':
+                        current_file = path
+                continue
+
+            # Detect hunk header
+            if line.startswith('@@'):
+                in_hunk = True
+                # Parse line numbers: @@ -old_start,old_count +new_start,new_count @@
+                try:
+                    parts = line.split(' ')
+                    if len(parts) >= 3:
+                        new_part = parts[2]  # +new_start,new_count or +new_start
+                        if new_part.startswith('+'):
+                            new_part = new_part[1:]
+                            if ',' in new_part:
+                                new_start_line = int(new_part.split(',')[0])
+                            else:
+                                new_start_line = int(new_part)
+
+                        old_part = parts[1]  # -old_start,old_count or -old_start
+                        if old_part.startswith('-'):
+                            old_part = old_part[1:]
+                            if ',' in old_part:
+                                old_start_line = int(old_part.split(',')[0])
+                            else:
+                                old_start_line = int(old_part)
+                except (ValueError, IndexError):
+                    pass
+                continue
+
+            # Skip metadata lines
+            if line.startswith('new file mode') or line.startswith('index '):
+                continue
+
+            # Skip "no newline" marker
+            if line.startswith('\\ No newline'):
+                continue
+
+            # Process diff content
+            if in_hunk:
+                if line.startswith('+'):
+                    found_change = True
+                    current_added.append(line[1:] + '\n')
+                    current_context_after = []  # Reset after context
+                elif line.startswith('-'):
+                    found_change = True
+                    current_removed.append(line[1:] + '\n')
+                    current_context_after = []  # Reset after context
+                elif line.startswith(' ') or line == '':
+                    content = line[1:] + '\n' if line.startswith(' ') else '\n'
+                    if not found_change:
+                        current_context_before.append(content)
+                    else:
+                        current_context_after.append(content)
+
+        # Save final section
+        if current_file and (current_added or current_removed):
+            sections.append(ChangedSection(
+                file_path=current_file,
+                old_start_line=old_start_line,
+                new_start_line=new_start_line,
+                context_before=current_context_before[-self.context_lines:],
+                removed_lines=current_removed,
+                added_lines=current_added,
+                context_after=current_context_after[:self.context_lines]
+            ))
+
+        logger.info(
+            "fallback_diff_parsed",
+            total_sections=len(sections),
+            total_changed_lines=sum(s.changed_lines_count for s in sections)
+        )
+
+        return sections
+
     def format_section_for_review(self, section: ChangedSection) -> str:
         """
         Format a changed section for AI review.

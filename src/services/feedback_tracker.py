@@ -106,8 +106,9 @@ class FeedbackTracker:
             history_table = get_table_client('reviewhistory')
 
             # Query reviews from the last N hours
-            # Note: Table Storage query with time filter
-            query_filter = f"reviewed_at ge datetime'{cutoff_time.isoformat()}'"
+            # Note: reviewed_at is stored as ISO string, not native datetime
+            # Use string comparison (ISO format is lexicographically sortable)
+            query_filter = f"reviewed_at ge '{cutoff_time.isoformat()}'"
 
             # v2.6.3: Use pagination with non-blocking thread pool
             recent_reviews = await asyncio.to_thread(
@@ -504,7 +505,8 @@ class FeedbackTracker:
 
         try:
             # Query feedback from last N days
-            query_filter = f"feedback_received_at ge datetime'{cutoff_time.isoformat()}'"
+            # Note: feedback_received_at is stored as ISO string, not native datetime
+            query_filter = f"feedback_received_at ge '{cutoff_time.isoformat()}'"
 
             # v2.6.3: Use pagination with non-blocking thread pool
             feedback_entries = await asyncio.to_thread(

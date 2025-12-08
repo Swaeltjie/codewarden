@@ -5,6 +5,257 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.32] - 2025-12-08
+
+### Fixed - Complete URL Encoding for All Azure DevOps API Endpoints
+
+**Problem:** Multiple Azure DevOps API endpoints were missing URL encoding for project names containing spaces. This affected projects like "GPP DevOps" throughout the entire PR review workflow.
+
+**Root Cause:** Only some methods (`get_file_diff`, `_get_file_content`, `_get_pr_threads`) had been updated with URL encoding. Other critical methods were missing this fix.
+
+**Fix:** Added `quote(project_id, safe='')` URL encoding to all remaining methods:
+- `get_pull_request_details()` - Fetches PR metadata
+- `get_pull_request_files()` - Fetches list of changed files (2 URLs)
+- `post_pr_comment()` - Posts summary comment to PR
+- `post_inline_comment()` - Posts inline code comments
+
+**Files Changed:**
+- `src/services/azure_devops.py` - Added URL encoding to 4 additional methods
+- `src/utils/config.py` - Version 2.6.32
+
+**Complete URL Encoding Coverage:**
+| Method | Status |
+|--------|--------|
+| `get_pull_request_details` | ✅ v2.6.32 |
+| `get_pull_request_files` | ✅ v2.6.32 |
+| `get_file_diff` | ✅ v2.6.29 |
+| `_get_file_content` | ✅ v2.6.29 |
+| `post_pr_comment` | ✅ v2.6.32 |
+| `post_inline_comment` | ✅ v2.6.32 |
+| `_get_pr_threads` | ✅ v2.6.31 |
+
+---
+
+## [2.6.31] - 2025-12-08
+
+### Fixed - Feedback Collection Thread Fetch URL Encoding
+
+**Problem:** The hourly feedback collector was failing to fetch PR threads for projects with spaces in their name (e.g., "GPP DevOps"). The `_get_pr_threads` API call was silently failing, resulting in `feedback_entries: 0`.
+
+**Root Cause:** The `_get_pr_threads` method in `azure_devops.py` was not URL-encoding the project name before using it in the API URL. Projects with spaces (like "GPP DevOps") caused 400 Bad Request errors or returned empty results.
+
+**Fix:** Added URL encoding to `_get_pr_threads`:
+```python
+# v2.6.31: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+encoded_project = quote(project_id, safe='')
+
+url = (
+    f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
+    f"{repository_id}/pullRequests/{pr_id}/threads"
+    f"?api-version={self.api_version}"
+)
+```
+
+**Files Changed:**
+- `src/services/azure_devops.py` - Added URL encoding in `_get_pr_threads()` (line 1084-1085)
+- `src/utils/config.py` - Version 2.6.31
+
+**Note:** This is the same URL encoding fix applied in v2.6.29 for `_get_file_content()`, but for the threads API endpoint used by feedback collection.
+
+---
+
+## [2.6.30] - 2025-12-08
+
+### Fixed - Feedback Collection DateTime Query Syntax
+
+**Problem:** The hourly feedback collector found reviews (`reviews_checked: 1`) but collected no feedback (`feedback_entries: 0`). The `reviewed_at` query was returning 0 results despite valid review history entries.
+
+**Root Cause:** DateTime fields (`reviewed_at`, `feedback_received_at`) are stored as ISO 8601 strings in Azure Table Storage, not native datetime types. The OData query was using datetime syntax `datetime'2025-12-08T...'` which doesn't work for string comparison.
+
+**Fix:** Changed query syntax to use string comparison (ISO format is lexicographically sortable):
+```python
+# Before (wrong - datetime OData syntax for string field):
+query_filter = f"reviewed_at ge datetime'{cutoff_time.isoformat()}'"
+
+# After (correct - string comparison):
+query_filter = f"reviewed_at ge '{cutoff_time.isoformat()}'"
+```
+
+**Files Changed:**
+- `src/services/feedback_tracker.py` - Fixed `reviewed_at` query (line 111) and `feedback_received_at` query (line 509)
+- `src/utils/config.py` - Version 2.6.30
+
+---
+
+## [2.6.29] - 2025-12-08
+
+### Fixed - Diff API Project Name and URL Encoding
+
+**Problem:** PR reviews were failing with `400 Bad Request` error when fetching file diffs. The error occurred for projects with spaces in their name (e.g., "GPP DevOps").
+
+**Root Causes:**
+1. `get_file_diff()` was passing `project_id` (UUID) but the Azure DevOps diffs API requires the project NAME
+2. `_get_file_content()` wasn't URL-encoding the project name, causing 400 errors for names with spaces
+
+**Fix 1:** Changed `pr_webhook.py` to pass project name instead of UUID:
+```python
+# Before:
+diff = await self.devops_client.get_file_diff(
+    project_id=pr_event.project_id,  # UUID - wrong!
+    ...
+)
+
+# After:
+diff = await self.devops_client.get_file_diff(
+    project_id=pr_event.project_name,  # Name - correct!
+    ...
+)
+```
+
+**Fix 2:** Added URL encoding in `azure_devops.py`:
+```python
+from urllib.parse import quote
+
+# URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+encoded_project = quote(project_id, safe='')
+url = f"{self.base_url}/{encoded_project}/_apis/git/repositories/..."
+```
+
+**Files Changed:**
+- `src/handlers/pr_webhook.py` - Pass `project_name` instead of `project_id` (line 310)
+- `src/services/azure_devops.py` - Added URL encoding with `quote()` in `_get_file_content()`
+- `src/utils/config.py` - Version 2.6.29
+
+**Symptoms Before Fix:**
+```
+diff_fetch_failed: 400, message='Bad Request'
+idempotency status: FAILED: ClientResponseError: 400, message='Bad Request'
+```
+
+**After Fix:**
+```
+pr_review_completed: files_reviewed=4, issues_found=6
+devops_comment_posted: thread_id=117646
+```
+
+---
+
+## [2.6.28] - 2025-12-08
+
+### Fixed - Feedback Collection Missing repository_id
+
+**Problem:** The hourly `feedback_collector_trigger` was not collecting feedback from resolved PR threads. The feedback table remained empty despite PRs being reviewed.
+
+**Root Cause:** `ReviewHistoryEntity` stored the repository name but not the UUID. The `FeedbackTracker` requires the repository UUID to call Azure DevOps API for fetching thread status (resolved/won't fix).
+
+**Fix:** Added `repository_id` field to review history:
+- `src/models/feedback.py` - Added `repository_id` field to `ReviewHistoryEntity`
+- `src/models/feedback.py` - Updated `from_review_result()` to accept `repository_id` parameter
+- `src/handlers/pr_webhook.py` - Now passes `pr_event.repository_id` when saving review history
+
+**Impact:** New PR reviews will store the repository UUID, enabling the feedback collector to query Azure DevOps for thread status and learn from developer feedback.
+
+---
+
+## [2.6.27] - 2025-12-05
+
+### Fixed - AI Timeout for GPT-5 Large Prompts
+
+**Problem:** GPT-5 reviews with 14K+ token prompts were timing out at 60 seconds, causing reviews to fail with `APITimeoutError`.
+
+**Root Cause:** Two timeouts were in conflict:
+- `AI_CLIENT_TIMEOUT = 60` - OpenAI client-level timeout
+- `AI_REQUEST_TIMEOUT = 90` - asyncio.wait_for timeout
+
+The client-level timeout fired first at 60 seconds, before GPT-5 could complete processing large prompts.
+
+**Fix:** Increased both timeouts to 180 seconds (3 minutes):
+```python
+AI_CLIENT_TIMEOUT = 180   # was 60
+AI_REQUEST_TIMEOUT = 180  # was 90
+```
+
+**Files Changed:**
+- `src/utils/constants.py` - Increased timeout values
+- `src/utils/config.py` - Version 2.6.27
+
+**Symptoms Before Fix:**
+```
+openai.APITimeoutError: Request timed out.
+duration=60093355657 (60s) error=1
+circuit_breaker_failure: failure_count=2
+```
+
+---
+
+## [2.6.26] - 2025-12-05
+
+### Fixed - Fallback Diff Parser for Unidiff Compatibility
+
+**Problem:** Generated diffs for new/modified files caused `unidiff.errors.UnidiffParseError: Hunk is longer than expected`, preventing reviews from processing.
+
+**Root Cause:** The `unidiff` library is strict about hunk line counts in diff headers. Our generated diffs (when Azure DevOps API doesn't return diff blocks) had line count mismatches that unidiff rejected.
+
+**Fix:** Added a lenient fallback parser that bypasses unidiff when it fails:
+- New `_fallback_parse_diff()` method manually parses diff content
+- Extracts file paths, added/removed lines, and context directly
+- Creates `ChangedSection` objects without strict hunk validation
+- Falls back automatically when unidiff raises `UnidiffParseError`
+
+**Files Changed:**
+- `src/services/diff_parser.py` - Added fallback parser method (~100 lines)
+- `src/utils/config.py` - Version 2.6.26
+
+**Log Output:**
+```
+unidiff_parse_failed_using_fallback: error="Hunk is longer than expected"
+fallback_diff_parsed: total_sections=1, total_changed_lines=882
+```
+
+---
+
+## [2.6.25] - 2025-12-05
+
+### Fixed - Diff Generation for Unidiff Compatibility
+
+**Problem:** Generated diffs were causing unidiff parsing failures.
+
+**Attempted Fix:** Enhanced diff generation in `azure_devops.py`:
+- Added CRLF to LF normalization for consistent parsing
+- Added proper trailing newline handling
+- Added `\ No newline at end of file` marker
+- Added empty file handling
+
+**Files Changed:**
+- `src/services/azure_devops.py` - Enhanced `_generate_add_diff()` and `_generate_delete_diff()`
+- `src/utils/config.py` - Version 2.6.25
+
+**Note:** This fix was insufficient - v2.6.26 added the definitive fallback parser solution.
+
+---
+
+## [2.6.24] - 2025-12-05
+
+### Fixed - File Content API Returns Raw Code
+
+**Problem:** Azure DevOps Items API was returning JSON metadata instead of actual file content, causing AI to review metadata objects instead of code.
+
+**Root Cause:** The API call was missing the download parameter to get raw file content.
+
+**Fix:** Added `&download=true` parameter to Items API URL with proper Accept headers:
+```python
+url = f"{self.base_url}/{project_id}/_apis/git/repositories/{repo_id}/items"
+url += f"?path={file_path}&versionDescriptor.version={version}"
+url += "&download=true&api-version=7.1"
+headers["Accept"] = "application/octet-stream"
+```
+
+**Files Changed:**
+- `src/services/azure_devops.py` - Updated `_get_file_content()` method
+- `src/utils/config.py` - Version 2.6.24
+
+---
+
 ## [2.6.23] - 2025-12-05
 
 ### Fixed - GPT-5 Parameter Compatibility

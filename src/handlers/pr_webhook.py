@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.6.2 - Reliability improvements
+Version: 2.6.24 - Fixed duration timing and file content fetching
 """
 import asyncio
 from typing import Dict, List, Optional, Tuple
@@ -220,12 +220,12 @@ class PRWebhookHandler:
                     changed_files, pr_event, learning_context
                 )
             
-            # Step 7: Post results to Azure DevOps
-            await self._post_review_results(pr_event, review_result)
-
-            # Calculate duration
+            # Calculate duration BEFORE posting so it appears correctly in comments
             duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             review_result.duration_seconds = duration
+
+            # Step 7: Post results to Azure DevOps
+            await self._post_review_results(pr_event, review_result)
 
             # Step 8: Save review history for pattern detection
             await self._save_review_history(pr_event, pr_details, review_result, strategy)
@@ -307,7 +307,7 @@ class PRWebhookHandler:
             async with self._review_semaphore:
                 try:
                     diff = await self.devops_client.get_file_diff(
-                        project_id=pr_event.project_id,
+                        project_id=pr_event.project_name,  # v2.6.29: diffs API requires project NAME, not UUID
                         repository_id=pr_event.repository_id,
                         file_path=file_path,
                         source_commit=pr_event.source_branch,
@@ -742,7 +742,8 @@ class PRWebhookHandler:
                     'author': pr_details.get('createdBy', {}).get('displayName', 'Unknown')
                 },
                 repository=pr_event.repository_name,
-                project=pr_event.project_name
+                project=pr_event.project_name,
+                repository_id=pr_event.repository_id
             )
 
             # Add strategy and AI model info
