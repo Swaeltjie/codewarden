@@ -109,9 +109,9 @@ stages:
         steps:
           - task: CodeWardenReview@1
             inputs:
-              severityThreshold: 'high'      # Block on high+ issues
-              securityFindings: 'block'      # Always block on security
-              timeout: 300                    # 5 minute timeout
+              severityThreshold: 'high'
+              securityFindings: 'block'
+              timeout: 300
               failOnError: true
 ```
 
@@ -151,6 +151,7 @@ First-class extension in Azure DevOps marketplace:
 Automatic Azure Boards integration:
 
 **Auto-Create Work Items**
+
 ```
 PR #1234: Add user authentication
     │
@@ -184,6 +185,7 @@ AI-powered reviewer recommendations:
 - Timezone optimization
 
 **Output:**
+
 ```
 Suggested Reviewers for PR #1234:
 ├── @alice (92% match) - Primary owner of auth module
@@ -231,6 +233,7 @@ Automated risk assessment for every PR:
 Fast regex-based pre-filter before AI review:
 
 **Detection Patterns:**
+
 ```python
 SECRET_PATTERNS = {
     'azure_storage_key': r'DefaultEndpointsProtocol=https;AccountName=.+;AccountKey=[A-Za-z0-9+/=]{88}',
@@ -239,7 +242,7 @@ SECRET_PATTERNS = {
     'azure_devops_pat': r'[a-z2-7]{52}',
     'jwt_token': r'eyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+',
     'private_key': r'-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----',
-    'high_entropy': r'[A-Za-z0-9+/]{40,}={0,2}',  # Base64 high entropy
+    'high_entropy': r'[A-Za-z0-9+/]{40,}={0,2}',
 }
 ```
 
@@ -249,29 +252,28 @@ SECRET_PATTERNS = {
 - Provide Managed Identity setup guidance
 - Link to Azure security documentation
 
-**Response:**
-```markdown
-🔴 **CRITICAL: Secret Detected**
+**Example Response:**
 
-**File:** `src/config/database.py:23`
-**Type:** Azure SQL Connection String
-**Confidence:** 98%
-
-**Found:**
-```python
-connection = "Server=myserver.database.windows.net;Password=MyP@ssw0rd123"
-```
-
-**Suggested Fix:**
-```python
-from azure.identity import DefaultAzureCredential
-from azure.keyvault.secrets import SecretClient
-
-credential = DefaultAzureCredential()
-client = SecretClient(vault_url="https://myvault.vault.azure.net", credential=credential)
-connection = client.get_secret("sql-connection-string").value
-```
-```
+> 🔴 **CRITICAL: Secret Detected**
+>
+> **File:** `src/config/database.py:23`
+> **Type:** Azure SQL Connection String
+> **Confidence:** 98%
+>
+> **Found:**
+> ```python
+> connection = "Server=myserver.database.windows.net;Password=MyP@ssw0rd123"
+> ```
+>
+> **Suggested Fix:**
+> ```python
+> from azure.identity import DefaultAzureCredential
+> from azure.keyvault.secrets import SecretClient
+>
+> credential = DefaultAzureCredential()
+> client = SecretClient(vault_url="https://myvault.vault.azure.net", credential=credential)
+> connection = client.get_secret("sql-connection-string").value
+> ```
 
 ---
 
@@ -291,18 +293,17 @@ Integration with Azure Artifacts and security databases:
 - .NET: *.csproj, packages.config, Directory.Packages.props
 - Java: pom.xml, build.gradle
 
-**Output:**
-```markdown
-## 🛡️ Dependency Security Report
+**Example Output:**
 
-| Package | Current | Vulnerable | Fixed In | Severity | CVE |
-|---------|---------|------------|----------|----------|-----|
-| requests | 2.25.0 | ✅ Yes | 2.31.0 | HIGH | CVE-2023-32681 |
-| pillow | 9.0.0 | ✅ Yes | 9.3.0 | CRITICAL | CVE-2023-4863 |
-| django | 4.1.0 | ❌ No | - | - | - |
-
-**Action Required:** Update 2 packages to resolve security vulnerabilities.
-```
+> ## 🛡️ Dependency Security Report
+>
+> | Package | Current | Vulnerable | Fixed In | Severity | CVE |
+> |---------|---------|------------|----------|----------|-----|
+> | requests | 2.25.0 | Yes | 2.31.0 | HIGH | CVE-2023-32681 |
+> | pillow | 9.0.0 | Yes | 9.3.0 | CRITICAL | CVE-2023-4863 |
+> | django | 4.1.0 | No | - | - | - |
+>
+> **Action Required:** Update 2 packages to resolve security vulnerabilities.
 
 ---
 
@@ -322,6 +323,7 @@ Built-in policy packs for regulatory compliance:
 | Azure Security Benchmark | Cloud security | 67 |
 
 **Custom Policy Definition:**
+
 ```yaml
 # .codewarden/policies/pci-dss.yml
 name: PCI-DSS Compliance
@@ -373,29 +375,28 @@ Code fix recommendations with one-click apply:
 
 | Risk | Auto-Apply | Examples |
 |------|------------|----------|
-| Trivial | ✅ Yes | Import sorting, trailing whitespace, unused imports |
-| Low | 🟡 Approval | Type hints, docstrings, simple renames |
-| Medium | ❌ Suggest | Error handling, null checks, validation |
-| High | ❌ Review | Security fixes, logic changes, refactoring |
+| Trivial | Yes | Import sorting, trailing whitespace, unused imports |
+| Low | Approval | Type hints, docstrings, simple renames |
+| Medium | Suggest | Error handling, null checks, validation |
+| High | Review | Security fixes, logic changes, refactoring |
 
-**Comment Format:**
-```markdown
-🔧 **Suggested Fix Available**
+**Example Comment:**
 
-**Issue:** Missing null check before dictionary access
-
-**Current Code:**
-```python
-user_name = data['user']['name']
-```
-
-**Suggested Fix:**
-```python
-user_name = data.get('user', {}).get('name', 'Unknown')
-```
-
-[✅ Apply Fix] [👀 View Diff] [❌ Dismiss]
-```
+> 🔧 **Suggested Fix Available**
+>
+> **Issue:** Missing null check before dictionary access
+>
+> **Current Code:**
+> ```python
+> user_name = data['user']['name']
+> ```
+>
+> **Suggested Fix:**
+> ```python
+> user_name = data.get('user', {}).get('name', 'Unknown')
+> ```
+>
+> `[Apply Fix]` `[View Diff]` `[Dismiss]`
 
 **Learning Loop:**
 - Track fix acceptance rate
@@ -480,6 +481,7 @@ Automated tech debt management:
 - Documentation gaps
 
 **Debt Velocity Chart:**
+
 ```
 Technical Debt Trend (lines of debt)
 │
@@ -504,6 +506,7 @@ Technical Debt Trend (lines of debt)
 Understand code relationships for better reviews:
 
 **Dependency Graph:**
+
 ```
 auth_service.py
 ├── imports → user_repository.py
@@ -536,6 +539,7 @@ Support multiple organizations with isolation:
 - Cost allocation per tenant
 
 **Configuration Hierarchy:**
+
 ```
 Global Defaults
     └── Organization Settings
@@ -583,6 +587,7 @@ rules:
 ```
 
 **Rule Testing:**
+
 ```bash
 codewarden test-rule CONTOSO-001 --sample ./test-samples/
 # ✅ Rule matched 15/15 positive samples
@@ -672,6 +677,7 @@ Multi-region deployment for global teams:
 - Caching for static content
 
 **Regional Deployments:**
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Azure Front Door                        │
@@ -705,16 +711,17 @@ Replace Table Storage for enterprise scale:
 - 99.999% availability SLA
 
 **Data Model:**
+
 ```json
 {
   "id": "review-abc123",
   "partitionKey": "/repository/contoso/webapp",
   "type": "review",
   "pr_id": 1234,
-  "issues": [...],
+  "issues": [],
   "tokens_used": 15000,
   "cost": 0.45,
-  "ttl": 7776000,  // 90 days
+  "ttl": 7776000,
   "_ts": 1699123456
 }
 ```
@@ -734,6 +741,7 @@ Full observability stack:
 - Failure analysis
 
 **Log Analytics Queries:**
+
 ```kusto
 // Top issues by repository
 CodeWardenReviews
@@ -783,6 +791,7 @@ Executive-ready reporting:
 AI-powered predictions:
 
 **Bug Probability Scoring:**
+
 ```
 File: src/services/payment_processor.py
 Bug Probability: 73% (High)
@@ -826,7 +835,7 @@ ignore:
     - "*.generated.cs"
 
   rules:
-    - STYLE-001  # Ignore specific rule
+    - STYLE-001
     - STYLE-002
 
 # Agent configuration
@@ -838,7 +847,7 @@ agents:
     enabled: true
     severity: normal
   style:
-    enabled: false  # Disable style checks
+    enabled: false
 
 # Custom rules for this repo
 rules:
@@ -852,7 +861,7 @@ rules:
 auto_fix:
   enabled: true
   trivial_only: true
-  create_commit: false  # Just suggest, don't commit
+  create_commit: false
 
 # Notifications
 notifications:
@@ -864,47 +873,46 @@ notifications:
 review:
   max_issues: 50
   include_suggestions: true
-  comment_format: "detailed"  # minimal | standard | detailed
+  comment_format: "detailed"
 ```
 
 ---
 
 ### 28. Interactive Review Comments 🔴
 
-Rich comment experience:
+Rich comment experience with actionable buttons:
 
-```markdown
-## 🔴 Critical: SQL Injection Vulnerability
+**Example Comment:**
 
-**File:** `src/api/users.py:45`
-**Rule:** SEC-001
-
-### Issue
-User input is directly concatenated into SQL query without sanitization.
-
-### Current Code
-```python
-query = f"SELECT * FROM users WHERE id = {user_id}"
-```
-
-### Impact
-- Attackers can extract sensitive data
-- Database can be modified or deleted
-- Potential for remote code execution
-
-### Suggested Fix
-```python
-query = "SELECT * FROM users WHERE id = ?"
-cursor.execute(query, (user_id,))
-```
-
-### Learn More
-📚 [OWASP SQL Injection Guide](https://owasp.org/sql-injection)
-📚 [Azure SQL Security Best Practices](https://docs.microsoft.com/azure/sql)
-
----
-[✅ Apply Fix] [💬 Ask Question] [🔇 Mute Rule] [👎 False Positive]
-```
+> ## 🔴 Critical: SQL Injection Vulnerability
+>
+> **File:** `src/api/users.py:45`
+> **Rule:** SEC-001
+>
+> ### Issue
+> User input is directly concatenated into SQL query without sanitization.
+>
+> ### Current Code
+> ```python
+> query = f"SELECT * FROM users WHERE id = {user_id}"
+> ```
+>
+> ### Impact
+> - Attackers can extract sensitive data
+> - Database can be modified or deleted
+> - Potential for remote code execution
+>
+> ### Suggested Fix
+> ```python
+> query = "SELECT * FROM users WHERE id = ?"
+> cursor.execute(query, (user_id,))
+> ```
+>
+> ### Learn More
+> - [OWASP SQL Injection Guide](https://owasp.org/sql-injection)
+> - [Azure SQL Security Best Practices](https://docs.microsoft.com/azure/sql)
+>
+> `[Apply Fix]` `[Ask Question]` `[Mute Rule]` `[False Positive]`
 
 ---
 
@@ -912,35 +920,32 @@ cursor.execute(query, (user_id,))
 
 Single overview comment on each PR:
 
-```markdown
-# 🤖 CodeWarden Review Summary
+**Example:**
 
-| Severity | Count |
-|----------|-------|
-| 🔴 Critical | 2 |
-| 🟠 High | 5 |
-| 🟡 Medium | 8 |
-| 🔵 Low | 12 |
-
-## 📊 Metrics
-- **Risk Score:** 67/100 (Medium)
-- **Files Reviewed:** 15
-- **Lines Analyzed:** 1,247
-- **Review Time:** 23 seconds
-- **Estimated Cost:** $0.34
-
-## 🎯 Top Issues
-1. 🔴 SQL injection in `api/users.py:45`
-2. 🔴 Hardcoded credentials in `config/database.py:12`
-3. 🟠 Missing authentication on `/admin` endpoint
-4. 🟠 N+1 query pattern in `services/reports.py:89`
-
-## 📈 Trend
-This PR has **23% fewer issues** than the repository average. Great job! 🎉
-
----
-*Review powered by CodeWarden v2.7.0 | [Dashboard](https://codewarden.contoso.com) | [Feedback](mailto:codewarden@contoso.com)*
-```
+> # 🤖 CodeWarden Review Summary
+>
+> | Severity | Count |
+> |----------|-------|
+> | 🔴 Critical | 2 |
+> | 🟠 High | 5 |
+> | 🟡 Medium | 8 |
+> | 🔵 Low | 12 |
+>
+> ## Metrics
+> - **Risk Score:** 67/100 (Medium)
+> - **Files Reviewed:** 15
+> - **Lines Analyzed:** 1,247
+> - **Review Time:** 23 seconds
+> - **Estimated Cost:** $0.34
+>
+> ## Top Issues
+> 1. 🔴 SQL injection in `api/users.py:45`
+> 2. 🔴 Hardcoded credentials in `config/database.py:12`
+> 3. 🟠 Missing authentication on `/admin` endpoint
+> 4. 🟠 N+1 query pattern in `services/reports.py:89`
+>
+> ## Trend
+> This PR has **23% fewer issues** than the repository average.
 
 ---
 
@@ -949,6 +954,7 @@ This PR has **23% fewer issues** than the repository average. Great job! 🎉
 Native Teams notifications:
 
 **Adaptive Card Format:**
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ 🤖 CodeWarden                                               │
@@ -991,19 +997,18 @@ Repository memory for smarter reviews:
 - Understand domain terminology
 - Recognize repository patterns
 
-**Contextual Comments:**
-```markdown
-💡 **Style Suggestion**
+**Example Contextual Comment:**
 
-This repository typically uses `snake_case` for function names
-(based on 847 existing functions), but this function uses `camelCase`:
-
-```python
-def getUserById(id):  # ← Inconsistent with repo style
-```
-
-Consider renaming to `get_user_by_id` for consistency.
-```
+> 💡 **Style Suggestion**
+>
+> This repository typically uses `snake_case` for function names
+> (based on 847 existing functions), but this function uses `camelCase`:
+>
+> ```python
+> def getUserById(id):  # ← Inconsistent with repo style
+> ```
+>
+> Consider renaming to `get_user_by_id` for consistency.
 
 ---
 
@@ -1018,36 +1023,30 @@ High-level architectural review:
 - Database access patterns
 - Error handling consistency
 
-**Output:**
-```markdown
-## 🏗️ Architecture Analysis
+**Example Output:**
 
-### Dependency Graph
-```
-┌──────────┐     ┌──────────┐
-│   API    │────▶│ Services │
-│  Layer   │     │  Layer   │
-└──────────┘     └────┬─────┘
-                      │
-     ⚠️ Violation     │
-     ┌────────────────┘
-     ▼
-┌──────────┐     ┌──────────┐
-│  Models  │◀────│   Data   │
-│  Layer   │     │  Layer   │
-└──────────┘     └──────────┘
-```
-
-### Issues Found
-1. **Layering Violation:** `api/users.py` directly imports from `data/repository.py`
-   - Should go through service layer
-
-2. **Circular Dependency:** `services/auth.py` ↔ `services/users.py`
-   - Consider extracting shared logic to new module
-
-3. **God Class:** `services/order_processor.py` has 45 methods
-   - Consider splitting by responsibility
-```
+> ## 🏗️ Architecture Analysis
+>
+> ### Dependency Graph
+> ```
+> ┌──────────┐     ┌──────────┐
+> │   API    │────▶│ Services │
+> │  Layer   │     │  Layer   │
+> └──────────┘     └────┬─────┘
+>                       │
+>      ⚠️ Violation     │
+>      ┌────────────────┘
+>      ▼
+> ┌──────────┐     ┌──────────┐
+> │  Models  │◀────│   Data   │
+> │  Layer   │     │  Layer   │
+> └──────────┘     └──────────┘
+> ```
+>
+> ### Issues Found
+> 1. **Layering Violation:** `api/users.py` directly imports from `data/repository.py`
+> 2. **Circular Dependency:** `services/auth.py` ↔ `services/users.py`
+> 3. **God Class:** `services/order_processor.py` has 45 methods
 
 ---
 
@@ -1055,29 +1054,28 @@ High-level architectural review:
 
 Ask questions about code in comments:
 
-```markdown
-**Developer Comment:**
+**Example Interaction:**
+
+> **Developer Comment:**
 > @codewarden Why is this function flagged? It looks fine to me.
-
-**CodeWarden Response:**
-This function was flagged for **potential N+1 query** because:
-
-1. The `get_orders` function (line 45) returns a list of orders
-2. Inside the loop (line 48), each order calls `order.customer.name`
-3. This triggers a separate database query for each order's customer
-
-**Performance Impact:**
-- 100 orders = 101 database queries (1 + 100)
-- Expected latency: 500ms → 5000ms
-
-**Recommended Fix:**
-```python
-# Use select_related or prefetch_related
-orders = Order.objects.select_related('customer').filter(status='pending')
-```
-
-This reduces 101 queries to just 1 query with a JOIN.
-```
+>
+> **CodeWarden Response:**
+> This function was flagged for **potential N+1 query** because:
+>
+> 1. The `get_orders` function (line 45) returns a list of orders
+> 2. Inside the loop (line 48), each order calls `order.customer.name`
+> 3. This triggers a separate database query for each order's customer
+>
+> **Performance Impact:**
+> - 100 orders = 101 database queries (1 + 100)
+> - Expected latency: 500ms → 5000ms
+>
+> **Recommended Fix:**
+> ```python
+> orders = Order.objects.select_related('customer').filter(status='pending')
+> ```
+>
+> This reduces 101 queries to just 1 query with a JOIN.
 
 ---
 

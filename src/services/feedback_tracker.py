@@ -332,12 +332,19 @@ class FeedbackTracker:
         # Try to extract issue type from comment
         # (Our comments should include this info)
         issue_type = "unknown"
-        severity = "unknown"
+        severity = "medium"  # Default to valid severity value
 
         # Simple parsing - in production you'd have a more robust parser
         for itype in issue_types:
             if itype.lower() in comment_text.lower():
                 issue_type = itype
+                break
+
+        # Extract severity from comment text
+        comment_lower = comment_text.lower()
+        for sev in ["critical", "high", "medium", "low", "info"]:
+            if sev in comment_lower:
+                severity = sev
                 break
 
         # Extract file path from thread context
