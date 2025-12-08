@@ -154,7 +154,7 @@ COST_PER_1K_COMPLETION_TOKENS = 0.03
 # =============================================================================
 
 # List of Azure Table Storage tables required by the application
-REQUIRED_TABLES = ['feedback', 'reviewhistory', 'idempotency', 'responsecache']
+REQUIRED_TABLES = ["feedback", "reviewhistory", "idempotency", "responsecache"]
 
 # Number of retry attempts for Table Storage operations
 TABLE_STORAGE_RETRY_ATTEMPTS = 3
@@ -176,7 +176,7 @@ TABLE_STORAGE_BATCH_SIZE = 100
 IDEMPOTENCY_TTL_HOURS = 48
 
 # Table name for storing idempotency keys
-IDEMPOTENCY_TABLE_NAME = 'idempotency'
+IDEMPOTENCY_TABLE_NAME = "idempotency"
 
 # Minimum days for idempotency statistics query
 IDEMPOTENCY_STATS_MIN_DAYS = 1
@@ -195,7 +195,7 @@ IDEMPOTENCY_STATS_DEFAULT_DAYS = 7
 CACHE_TTL_DAYS = 3
 
 # Table name for storing cached responses
-CACHE_TABLE_NAME = 'responsecache'
+CACHE_TABLE_NAME = "responsecache"
 
 # Rate limit for cache writes to prevent storage throttling
 CACHE_MAX_WRITES_PER_MINUTE = 100
@@ -221,7 +221,7 @@ CIRCUIT_BREAKER_LOCK_TIMEOUT_SECONDS = 30
 # =============================================================================
 
 # Table name for storing developer feedback
-FEEDBACK_TABLE_NAME = 'feedback'
+FEEDBACK_TABLE_NAME = "feedback"
 
 # Hours to look back when collecting feedback from PR threads
 FEEDBACK_COLLECTION_HOURS = 24
@@ -236,11 +236,39 @@ FEEDBACK_HIGH_VALUE_THRESHOLD = 0.7
 FEEDBACK_LOW_VALUE_THRESHOLD = 0.3
 
 # =============================================================================
+# FEEDBACK LEARNING SETTINGS (v2.7.0)
+# =============================================================================
+
+# Maximum few-shot examples per issue type in learning context
+MAX_EXAMPLES_PER_ISSUE_TYPE = 3
+
+# Maximum total examples to include in prompt (prevents token bloat)
+MAX_TOTAL_EXAMPLES_IN_PROMPT = 10
+
+# Maximum code snippet length in examples (characters)
+MAX_EXAMPLE_CODE_SNIPPET_LENGTH = 500
+
+# Maximum suggestion text length in examples (characters)
+MAX_EXAMPLE_SUGGESTION_LENGTH = 300
+
+# Days to look back for extracting few-shot examples
+LEARNING_CONTEXT_DAYS = 90
+
+# Minimum acceptance rate for an example to be considered "high quality"
+MIN_EXAMPLE_QUALITY_RATE = 0.8
+
+# Maximum rejection patterns to include in prompt
+MAX_REJECTION_PATTERNS = 5
+
+# Minimum rejections before a pattern is considered significant
+MIN_REJECTIONS_FOR_PATTERN = 3
+
+# =============================================================================
 # REVIEW HISTORY SETTINGS
 # =============================================================================
 
 # Table name for storing review history
-REVIEW_HISTORY_TABLE_NAME = 'reviewhistory'
+REVIEW_HISTORY_TABLE_NAME = "reviewhistory"
 
 # Days to analyze for pattern detection
 PATTERN_ANALYSIS_DAYS = 30
@@ -364,10 +392,10 @@ MAX_LINES_PER_FILE = 100_000
 MAX_TOKENS_PER_FILE = 1_000_000
 
 # Strategy thresholds for determining review approach
-STRATEGY_SMALL_FILE_LIMIT = 5          # Max files for single-pass review
-STRATEGY_SMALL_TOKEN_LIMIT = 10_000    # Max tokens for single-pass review
-STRATEGY_MEDIUM_FILE_LIMIT = 15        # Max files for chunked review
-STRATEGY_MEDIUM_TOKEN_LIMIT = 40_000   # Max tokens for chunked review
+STRATEGY_SMALL_FILE_LIMIT = 5  # Max files for single-pass review
+STRATEGY_SMALL_TOKEN_LIMIT = 10_000  # Max tokens for single-pass review
+STRATEGY_MEDIUM_FILE_LIMIT = 15  # Max files for chunked review
+STRATEGY_MEDIUM_TOKEN_LIMIT = 40_000  # Max tokens for chunked review
 
 # Tokens per line estimate for code files
 TOKENS_PER_LINE_ESTIMATE = 6

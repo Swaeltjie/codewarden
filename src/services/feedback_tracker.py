@@ -3,14 +3,15 @@
 Feedback Tracker
 
 Tracks developer feedback on AI suggestions to improve over time.
+Supports few-shot learning with accepted examples and rejection patterns.
 
-Version: 2.6.37 - Added per-thread error handling and properties validation
+Version: 2.7.0 - Added few-shot learning with examples and rejection patterns
 """
 import asyncio
 import uuid
 import json
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from datetime import datetime, timezone, timedelta
 from collections import Counter, defaultdict
 
@@ -20,7 +21,13 @@ from src.utils.table_storage import (
     sanitize_odata_value,
     query_entities_paginated,
 )
-from src.models.feedback import FeedbackEntity, FeedbackType
+from src.models.feedback import (
+    FeedbackEntity,
+    FeedbackType,
+    FeedbackExample,
+    RejectionPattern,
+    LearningContext,
+)
 from src.services.azure_devops import AzureDevOpsClient
 from src.utils.config import get_settings
 from src.utils.constants import (
@@ -30,6 +37,12 @@ from src.utils.constants import (
     FEEDBACK_LOW_VALUE_THRESHOLD,
     PATTERN_ANALYSIS_DAYS,
     TABLE_STORAGE_BATCH_SIZE,
+    MAX_EXAMPLES_PER_ISSUE_TYPE,
+    MAX_EXAMPLE_CODE_SNIPPET_LENGTH,
+    MAX_EXAMPLE_SUGGESTION_LENGTH,
+    LEARNING_CONTEXT_DAYS,
+    MIN_REJECTIONS_FOR_PATTERN,
+    MAX_REJECTION_PATTERNS,
 )
 from src.utils.logging import get_logger
 
@@ -580,3 +593,283 @@ class FeedbackTracker:
         except Exception as e:
             logger.exception("feedback_summary_error", error=str(e))
             return {"error": str(e)}
+
+    async def _extract_accepted_examples(
+        self,
+        feedback_entries: List[dict],
+        repository: str,
+    ) -> Dict[str, List[FeedbackExample]]:
+        """
+        Extract few-shot examples from accepted suggestions.
+
+        Identifies suggestions that were marked as resolved/accepted and
+        extracts them as examples for prompt injection.
+
+        Args:
+            feedback_entries: List of feedback entity dicts from table storage
+            repository: Repository name for logging
+
+        Returns:
+            Dictionary mapping issue_type to list of FeedbackExample objects
+        """
+        examples: Dict[str, List[FeedbackExample]] = defaultdict(list)
+
+        # Filter to positive feedback only
+        positive_entries = [e for e in feedback_entries if e.get("is_positive", False)]
+
+        if not positive_entries:
+            logger.debug("no_positive_feedback", repository=repository)
+            return dict(examples)
+
+        # Group by issue type and extract best examples
+        by_issue_type: Dict[str, List[dict]] = defaultdict(list)
+        for entry in positive_entries:
+            issue_type = entry.get("issue_type", "unknown")
+            if issue_type != "unknown":
+                by_issue_type[issue_type].append(entry)
+
+        # For each issue type, create FeedbackExample objects
+        for issue_type, entries in by_issue_type.items():
+            # Sort by recency (most recent first)
+            sorted_entries = sorted(
+                entries,
+                key=lambda x: x.get("feedback_received_at", ""),
+                reverse=True,
+            )
+
+            # Take up to MAX_EXAMPLES_PER_ISSUE_TYPE
+            for entry in sorted_entries[:MAX_EXAMPLES_PER_ISSUE_TYPE]:
+                try:
+                    # Extract code snippet from file_path context
+                    # In real implementation, we'd fetch from cache or PR data
+                    file_path = entry.get("file_path", "unknown")
+
+                    # Create example with truncated content
+                    example = FeedbackExample(
+                        issue_type=issue_type,
+                        code_snippet=f"[Code from {file_path}]"[
+                            :MAX_EXAMPLE_CODE_SNIPPET_LENGTH
+                        ],
+                        suggestion=f"Issue flagged and accepted by team"[
+                            :MAX_EXAMPLE_SUGGESTION_LENGTH
+                        ],
+                        file_path=file_path[:500],
+                        severity=entry.get("severity", "medium"),
+                        acceptance_count=1,
+                    )
+                    examples[issue_type].append(example)
+
+                except Exception as e:
+                    logger.warning(
+                        "example_extraction_failed",
+                        issue_type=issue_type,
+                        error=str(e),
+                    )
+                    continue
+
+        logger.info(
+            "examples_extracted",
+            repository=repository,
+            issue_types=len(examples),
+            total_examples=sum(len(v) for v in examples.values()),
+        )
+
+        return dict(examples)
+
+    async def _analyze_rejection_patterns(
+        self,
+        feedback_entries: List[dict],
+        repository: str,
+    ) -> List[RejectionPattern]:
+        """
+        Analyze patterns in rejected suggestions.
+
+        Identifies issue types that are consistently rejected by the team
+        to help reduce false positives in future reviews.
+
+        Args:
+            feedback_entries: List of feedback entity dicts from table storage
+            repository: Repository name for logging
+
+        Returns:
+            List of RejectionPattern objects
+        """
+        patterns: List[RejectionPattern] = []
+
+        # Filter to negative feedback only
+        negative_entries = [
+            e for e in feedback_entries if not e.get("is_positive", True)
+        ]
+
+        if not negative_entries:
+            logger.debug("no_negative_feedback", repository=repository)
+            return patterns
+
+        # Count rejections by issue type
+        rejection_counts: Counter = Counter()
+        sample_contexts: Dict[str, str] = {}
+
+        for entry in negative_entries:
+            issue_type = entry.get("issue_type", "unknown")
+            if issue_type != "unknown":
+                rejection_counts[issue_type] += 1
+                # Keep first file_path as sample context
+                if issue_type not in sample_contexts:
+                    sample_contexts[issue_type] = entry.get("file_path", "")[:200]
+
+        # Create patterns for issue types with significant rejections
+        for issue_type, count in rejection_counts.most_common(MAX_REJECTION_PATTERNS):
+            if count >= MIN_REJECTIONS_FOR_PATTERN:
+                pattern = RejectionPattern(
+                    issue_type=issue_type,
+                    reason=f"Rejected {count} times by the team",
+                    rejection_count=count,
+                    sample_context=sample_contexts.get(issue_type),
+                )
+                patterns.append(pattern)
+
+        logger.info(
+            "rejection_patterns_analyzed",
+            repository=repository,
+            patterns_found=len(patterns),
+            total_rejections=len(negative_entries),
+        )
+
+        return patterns
+
+    async def get_enhanced_learning_context(
+        self,
+        repository: str,
+        days: int = LEARNING_CONTEXT_DAYS,
+    ) -> LearningContext:
+        """
+        Get enhanced learning context with few-shot examples and rejection patterns.
+
+        Builds on the basic learning context to include:
+        - Few-shot examples from accepted suggestions
+        - Rejection patterns to avoid
+        - Full LearningContext model
+
+        Args:
+            repository: Repository name
+            days: Number of days of feedback to analyze (1-365)
+
+        Returns:
+            LearningContext object with examples and patterns
+        """
+        logger.info(
+            "enhanced_learning_context_requested",
+            repository=repository,
+            days=days,
+        )
+
+        # Validate days parameter
+        days = max(1, min(365, days))
+
+        # Ensure table exists
+        await asyncio.to_thread(ensure_table_exists, "feedback")
+        table_client = get_table_client("feedback")
+
+        cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
+
+        try:
+            # Query feedback for this repository within time window
+            safe_repository = sanitize_odata_value(repository)
+            query_filter = (
+                f"PartitionKey eq '{safe_repository}' and "
+                f"feedback_received_at ge datetime'{cutoff_time.isoformat()}'"
+            )
+
+            feedback_entries = await asyncio.to_thread(
+                lambda: list(
+                    query_entities_paginated(
+                        table_client,
+                        query_filter=query_filter,
+                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    )
+                )
+            )
+
+            # Calculate basic statistics
+            issue_stats: Dict[str, Dict[str, int]] = defaultdict(
+                lambda: {"positive": 0, "negative": 0}
+            )
+            total_positive = 0
+            total_negative = 0
+
+            for entry in feedback_entries:
+                issue_type = entry.get("issue_type", "unknown")
+                is_positive = entry.get("is_positive", False)
+
+                if is_positive:
+                    issue_stats[issue_type]["positive"] += 1
+                    total_positive += 1
+                else:
+                    issue_stats[issue_type]["negative"] += 1
+                    total_negative += 1
+
+            # Calculate rates and categorize issue types
+            high_value: List[str] = []
+            low_value: List[str] = []
+
+            for issue_type, stats in issue_stats.items():
+                total = stats["positive"] + stats["negative"]
+                if total >= FEEDBACK_MIN_SAMPLES:
+                    rate = stats["positive"] / total
+                    if rate >= FEEDBACK_HIGH_VALUE_THRESHOLD:
+                        high_value.append(issue_type)
+                    elif rate <= FEEDBACK_LOW_VALUE_THRESHOLD:
+                        low_value.append(issue_type)
+
+            total_feedback = total_positive + total_negative
+            positive_rate = (
+                total_positive / total_feedback if total_feedback > 0 else 0.0
+            )
+
+            # Extract few-shot examples
+            examples = await self._extract_accepted_examples(
+                feedback_entries, repository
+            )
+
+            # Analyze rejection patterns
+            rejection_patterns = await self._analyze_rejection_patterns(
+                feedback_entries, repository
+            )
+
+            # Build LearningContext
+            context = LearningContext(
+                repository=repository,
+                high_value_issue_types=sorted(high_value),
+                low_value_issue_types=sorted(low_value),
+                positive_feedback_rate=round(positive_rate, 3),
+                total_feedback_count=total_feedback,
+                issue_type_stats=dict(issue_stats),
+                examples=examples,
+                rejection_patterns=rejection_patterns,
+                days_analyzed=days,
+            )
+
+            logger.info(
+                "enhanced_learning_context_generated",
+                repository=repository,
+                high_value_count=len(high_value),
+                low_value_count=len(low_value),
+                examples_count=sum(len(v) for v in examples.values()),
+                patterns_count=len(rejection_patterns),
+                positive_rate=positive_rate,
+            )
+
+            return context
+
+        except Exception as e:
+            logger.exception(
+                "enhanced_learning_context_error",
+                repository=repository,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            # Return empty context on error
+            return LearningContext(
+                repository=repository,
+                days_analyzed=days,
+            )

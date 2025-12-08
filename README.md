@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/CodeWarden-AI%20PR%20Reviewer-blueviolet?style=for-the-badge&logo=azure-devops" alt="CodeWarden">
-</p>
-
 <h1 align="center">CodeWarden</h1>
 
 <p align="center">

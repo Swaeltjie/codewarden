@@ -3,12 +3,14 @@
 Prompt Factory for AI Code Reviews
 
 Generates specialized prompts for different file types and review strategies.
+Supports few-shot learning with accepted examples and rejection patterns.
 
-Version: 2.6.0 - Universal code review with dynamic best practices
+Version: 2.7.0 - Added few-shot learning with examples and rejection patterns
 """
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Union
 import re
 from src.models.pr_event import FileChange, FileType
+from src.models.feedback import LearningContext, FeedbackExample, RejectionPattern
 from src.services.diff_parser import DiffParser
 from src.services.file_type_registry import FileTypeRegistry, FileCategory
 from src.utils.constants import (
@@ -18,6 +20,8 @@ from src.utils.constants import (
     PROMPT_MAX_ISSUE_TYPE_LENGTH,
     LOG_FIELD_MAX_LENGTH,
     MAX_BEST_PRACTICES_IN_PROMPT,
+    MAX_TOTAL_EXAMPLES_IN_PROMPT,
+    MAX_REJECTION_PATTERNS,
 )
 from src.utils.logging import get_logger
 
@@ -72,26 +76,26 @@ class PromptFactory:
         # - Remove instruction-like patterns
         # - Remove potential delimiter confusion
         dangerous_patterns = [
-            r'(?i)ignore\s+(all\s+)?(previous|above|prior)\s+instructions?',
-            r'(?i)disregard\s+(all\s+)?(previous|above|prior)',
-            r'(?i)new\s+instructions?:',
-            r'(?i)system\s*:',
-            r'(?i)assistant\s*:',
-            r'(?i)user\s*:',
-            r'---+',  # Markdown horizontal rules that could break sections
+            r"(?i)ignore\s+(all\s+)?(previous|above|prior)\s+instructions?",
+            r"(?i)disregard\s+(all\s+)?(previous|above|prior)",
+            r"(?i)new\s+instructions?:",
+            r"(?i)system\s*:",
+            r"(?i)assistant\s*:",
+            r"(?i)user\s*:",
+            r"---+",  # Markdown horizontal rules that could break sections
         ]
 
         for pattern in dangerous_patterns:
-            text = re.sub(pattern, '[REDACTED]', text)
+            text = re.sub(pattern, "[REDACTED]", text)
 
         # Replace multiple newlines with single newline to prevent section breaks
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
 
         # Log if sanitization modified the input (potential attack attempt)
-        if '[REDACTED]' in text:
+        if "[REDACTED]" in text:
             logger.warning(
                 "potential_prompt_injection_detected",
-                sanitized_text=text[:LOG_FIELD_MAX_LENGTH]
+                sanitized_text=text[:LOG_FIELD_MAX_LENGTH],
             )
 
         return text
@@ -116,69 +120,60 @@ class PromptFactory:
         if not isinstance(learning_context, dict):
             logger.error(
                 "invalid_learning_context_type",
-                context_type=type(learning_context).__name__
+                context_type=type(learning_context).__name__,
             )
-            raise ValueError(f"learning_context must be dict, got {type(learning_context)}")
+            raise ValueError(
+                f"learning_context must be dict, got {type(learning_context)}"
+            )
 
         # Validate expected fields and types
         validated = {}
 
         # Validate high_value_issue_types (list of strings)
-        if 'high_value_issue_types' in learning_context:
-            high_value = learning_context['high_value_issue_types']
+        if "high_value_issue_types" in learning_context:
+            high_value = learning_context["high_value_issue_types"]
             if isinstance(high_value, list):
                 # Sanitize each issue type string
-                validated['high_value_issue_types'] = [
+                validated["high_value_issue_types"] = [
                     PromptFactory._sanitize_user_input(
-                        str(item),
-                        PromptFactory.MAX_ISSUE_TYPE_LENGTH
+                        str(item), PromptFactory.MAX_ISSUE_TYPE_LENGTH
                     )
                     for item in high_value[:10]  # Limit to 10 items
                     if item
                 ]
 
         # Validate low_value_issue_types (list of strings)
-        if 'low_value_issue_types' in learning_context:
-            low_value = learning_context['low_value_issue_types']
+        if "low_value_issue_types" in learning_context:
+            low_value = learning_context["low_value_issue_types"]
             if isinstance(low_value, list):
-                validated['low_value_issue_types'] = [
+                validated["low_value_issue_types"] = [
                     PromptFactory._sanitize_user_input(
-                        str(item),
-                        PromptFactory.MAX_ISSUE_TYPE_LENGTH
+                        str(item), PromptFactory.MAX_ISSUE_TYPE_LENGTH
                     )
                     for item in low_value[:10]  # Limit to 10 items
                     if item
                 ]
 
         # Validate positive_feedback_rate (float between 0 and 1)
-        if 'positive_feedback_rate' in learning_context:
-            rate = learning_context['positive_feedback_rate']
+        if "positive_feedback_rate" in learning_context:
+            rate = learning_context["positive_feedback_rate"]
             if isinstance(rate, (int, float)) and 0.0 <= rate <= 1.0:
-                validated['positive_feedback_rate'] = float(rate)
+                validated["positive_feedback_rate"] = float(rate)
             else:
-                logger.warning(
-                    "invalid_positive_feedback_rate",
-                    rate=rate
-                )
+                logger.warning("invalid_positive_feedback_rate", rate=rate)
 
         # Validate total_feedback_count (non-negative integer)
-        if 'total_feedback_count' in learning_context:
-            count = learning_context['total_feedback_count']
+        if "total_feedback_count" in learning_context:
+            count = learning_context["total_feedback_count"]
             if isinstance(count, int) and count >= 0:
-                validated['total_feedback_count'] = count
+                validated["total_feedback_count"] = count
             else:
-                logger.warning(
-                    "invalid_total_feedback_count",
-                    count=count
-                )
+                logger.warning("invalid_total_feedback_count", count=count)
 
         return validated
-    
+
     def build_single_pass_prompt(
-        self,
-        files: List[FileChange],
-        pr_title: str,
-        learning_context: Dict
+        self, files: List[FileChange], pr_title: str, learning_context: Dict
     ) -> str:
         """
         Build prompt for single-pass review (small PRs).
@@ -205,12 +200,16 @@ class PromptFactory:
         # Header (sanitized)
         prompt_parts.append(f"# Pull Request Review: {safe_pr_title}")
         prompt_parts.append("")
-        prompt_parts.append("Review the following code changes for security, best practices, and code quality.")
+        prompt_parts.append(
+            "Review the following code changes for security, best practices, and code quality."
+        )
         prompt_parts.append("")
 
         # Add learning context if available (Phase 2 implementation)
         if safe_learning_context:
-            learning_section = self._build_learning_context_section(safe_learning_context)
+            learning_section = self._build_learning_context_section(
+                safe_learning_context
+            )
             if learning_section:
                 prompt_parts.append(learning_section)
                 prompt_parts.append("")
@@ -237,11 +236,9 @@ class PromptFactory:
         prompt_parts.append(self._get_response_format())
 
         return "\n".join(prompt_parts)
-    
+
     def build_group_prompt(
-        self,
-        files: List[FileChange],
-        learning_context: Dict
+        self, files: List[FileChange], learning_context: Dict
     ) -> str:
         """
         Build prompt for reviewing a group of related files.
@@ -281,12 +278,8 @@ class PromptFactory:
         prompt_parts.append(self._get_response_format())
 
         return "\n".join(prompt_parts)
-    
-    def build_file_prompt(
-        self,
-        file: FileChange,
-        learning_context: Dict
-    ) -> str:
+
+    def build_file_prompt(self, file: FileChange, learning_context: Dict) -> str:
         """
         Build prompt for reviewing a single file.
 
@@ -318,7 +311,7 @@ class PromptFactory:
         prompt_parts.append(self._get_response_format())
 
         return "\n".join(prompt_parts)
-    
+
     def build_cross_file_prompt(self, results: List) -> str:
         """
         Build prompt for cross-file dependency analysis.
@@ -337,7 +330,9 @@ class PromptFactory:
 
         prompt_parts.append("# Cross-File Dependency Analysis")
         prompt_parts.append("")
-        prompt_parts.append("The following files have critical or high-severity issues:")
+        prompt_parts.append(
+            "The following files have critical or high-severity issues:"
+        )
         prompt_parts.append("")
 
         for result in results:
@@ -345,17 +340,18 @@ class PromptFactory:
             safe_pr_id = self._sanitize_user_input(str(result.pr_id), 50)
             prompt_parts.append(f"## PR {safe_pr_id}")
 
-            if hasattr(result, 'issues') and result.issues:
+            if hasattr(result, "issues") and result.issues:
                 for issue in result.issues:
-                    if hasattr(issue, 'is_critical_or_high') and issue.is_critical_or_high:
+                    if (
+                        hasattr(issue, "is_critical_or_high")
+                        and issue.is_critical_or_high
+                    ):
                         # Sanitize file path and message
                         safe_file_path = self._sanitize_user_input(
-                            issue.file_path,
-                            self.MAX_PATH_LENGTH
+                            issue.file_path, self.MAX_PATH_LENGTH
                         )
                         safe_message = self._sanitize_user_input(
-                            issue.message,
-                            self.MAX_MESSAGE_LENGTH
+                            issue.message, self.MAX_MESSAGE_LENGTH
                         )
                         prompt_parts.append(f"- {safe_file_path}: {safe_message}")
 
@@ -366,7 +362,7 @@ class PromptFactory:
         prompt_parts.append('{"analysis": "description of cross-file impacts"}')
 
         return "\n".join(prompt_parts)
-    
+
     def _get_review_instructions(self, files: List[FileChange]) -> str:
         """
         Get review instructions based on file categories.
@@ -387,16 +383,23 @@ class PromptFactory:
 
         # Common focus areas (apply to all files)
         instructions.append("Focus on:")
-        instructions.append("1. **Security**: Exposed endpoints, hardcoded secrets, weak permissions, injection vulnerabilities")
-        instructions.append("2. **Best Practices**: Code quality, naming conventions, documentation, error handling")
-        instructions.append("3. **Reliability**: Error handling, edge cases, resource management")
-        instructions.append("4. **Performance**: Inefficient patterns, unnecessary operations, optimization opportunities")
+        instructions.append(
+            "1. **Security**: Exposed endpoints, hardcoded secrets, weak permissions, injection vulnerabilities"
+        )
+        instructions.append(
+            "2. **Best Practices**: Code quality, naming conventions, documentation, error handling"
+        )
+        instructions.append(
+            "3. **Reliability**: Error handling, edge cases, resource management"
+        )
+        instructions.append(
+            "4. **Performance**: Inefficient patterns, unnecessary operations, optimization opportunities"
+        )
         instructions.append("")
 
         # Add category-specific instructions using the registry
         category_instructions = FileTypeRegistry.format_best_practices_for_prompt(
-            categories=list(categories),
-            max_practices=MAX_BEST_PRACTICES_IN_PROMPT
+            categories=list(categories), max_practices=MAX_BEST_PRACTICES_IN_PROMPT
         )
 
         if category_instructions:
@@ -409,11 +412,11 @@ class PromptFactory:
         logger.debug(
             "review_instructions_generated",
             categories=list(categories),
-            category_count=len(categories)
+            category_count=len(categories),
         )
 
         return "\n".join(instructions)
-    
+
     def _get_response_format(self) -> str:
         """Get required JSON response format with suggested fixes."""
         return """## Response Format
@@ -481,20 +484,20 @@ Respond with valid JSON only:
         if not learning_context:
             return None
 
-        total_feedback = learning_context.get('total_feedback_count', 0)
+        total_feedback = learning_context.get("total_feedback_count", 0)
 
         # Require minimum feedback for statistical significance
         if total_feedback < 5:
             logger.debug(
                 "insufficient_feedback_for_learning",
                 total_feedback=total_feedback,
-                minimum_required=5
+                minimum_required=5,
             )
             return None
 
-        high_value = learning_context.get('high_value_issue_types', [])
-        low_value = learning_context.get('low_value_issue_types', [])
-        positive_rate = learning_context.get('positive_feedback_rate', 0.0)
+        high_value = learning_context.get("high_value_issue_types", [])
+        low_value = learning_context.get("low_value_issue_types", [])
+        positive_rate = learning_context.get("positive_feedback_rate", 0.0)
 
         section_parts = ["## Team Preferences (Based on Past Feedback)", ""]
 
@@ -550,7 +553,196 @@ Respond with valid JSON only:
             "learning_context_added_to_prompt",
             high_value_count=len(high_value),
             low_value_count=len(low_value),
-            total_feedback=total_feedback
+            total_feedback=total_feedback,
+        )
+
+        return "\n".join(section_parts)
+
+    def _build_few_shot_examples_section(
+        self,
+        examples: Dict[str, List[FeedbackExample]],
+    ) -> Optional[str]:
+        """
+        Build few-shot examples section for prompts.
+
+        Includes real examples of suggestions that were accepted by the team,
+        helping the AI learn from successful reviews.
+
+        Args:
+            examples: Dictionary mapping issue_type to list of FeedbackExample
+
+        Returns:
+            Formatted section with few-shot examples, or None if no examples
+        """
+        if not examples:
+            return None
+
+        # Flatten and limit total examples
+        all_examples: List[FeedbackExample] = []
+        for issue_type, type_examples in examples.items():
+            all_examples.extend(type_examples)
+
+        if not all_examples:
+            return None
+
+        # Limit total examples to prevent token bloat
+        limited_examples = all_examples[:MAX_TOTAL_EXAMPLES_IN_PROMPT]
+
+        section_parts = ["## Accepted Examples (Team Approved These)", ""]
+        section_parts.append(
+            "The following suggestions were accepted by the team. "
+            "Use these as examples of the quality and style of feedback they value:"
+        )
+        section_parts.append("")
+
+        for i, example in enumerate(limited_examples, 1):
+            # Sanitize all user-controlled content
+            safe_issue_type = self._sanitize_user_input(
+                example.issue_type, self.MAX_ISSUE_TYPE_LENGTH
+            )
+            safe_file_path = self._sanitize_user_input(
+                example.file_path, self.MAX_PATH_LENGTH
+            )
+            safe_code_snippet = self._sanitize_user_input(example.code_snippet, 500)
+            safe_suggestion = self._sanitize_user_input(example.suggestion, 300)
+
+            section_parts.append(
+                f"**Example {i}: {safe_issue_type}** ({example.severity})"
+            )
+            section_parts.append(f"File: `{safe_file_path}`")
+
+            if safe_code_snippet and safe_code_snippet != "[Code from unknown]":
+                section_parts.append(f"Code: `{safe_code_snippet}`")
+
+            section_parts.append(f"Suggestion: {safe_suggestion}")
+            section_parts.append("")
+
+        logger.debug(
+            "few_shot_examples_added",
+            example_count=len(limited_examples),
+            issue_types=len(examples),
+        )
+
+        return "\n".join(section_parts)
+
+    def _build_rejection_patterns_section(
+        self,
+        patterns: List[RejectionPattern],
+    ) -> Optional[str]:
+        """
+        Build rejection patterns section for prompts.
+
+        Identifies patterns that the team consistently rejects,
+        helping the AI avoid similar false positives.
+
+        Args:
+            patterns: List of RejectionPattern objects
+
+        Returns:
+            Formatted section with rejection patterns, or None if no patterns
+        """
+        if not patterns:
+            return None
+
+        # Limit patterns
+        limited_patterns = patterns[:MAX_REJECTION_PATTERNS]
+
+        section_parts = ["## Patterns to Avoid (Team Rejects These)", ""]
+        section_parts.append(
+            "The following issue types are frequently rejected by the team. "
+            "Avoid flagging these unless they are critical severity:"
+        )
+        section_parts.append("")
+
+        for pattern in limited_patterns:
+            # Sanitize all user-controlled content
+            safe_issue_type = self._sanitize_user_input(
+                pattern.issue_type, self.MAX_ISSUE_TYPE_LENGTH
+            )
+            safe_reason = self._sanitize_user_input(pattern.reason, 200)
+
+            section_parts.append(
+                f"- **{safe_issue_type}**: {safe_reason} "
+                f"(rejected {pattern.rejection_count}x)"
+            )
+
+        section_parts.append("")
+        section_parts.append(
+            "**Note:** Only flag these patterns if the issue is critical or "
+            "high severity with clear security implications."
+        )
+        section_parts.append("")
+
+        logger.debug(
+            "rejection_patterns_added",
+            pattern_count=len(limited_patterns),
+        )
+
+        return "\n".join(section_parts)
+
+    def build_enhanced_learning_section(
+        self,
+        learning_context: Union[LearningContext, Dict],
+    ) -> Optional[str]:
+        """
+        Build complete enhanced learning section with examples and patterns.
+
+        Combines:
+        - Basic learning context (high/low value issue types)
+        - Few-shot examples from accepted suggestions
+        - Rejection patterns to avoid
+
+        Args:
+            learning_context: LearningContext model or legacy dict
+
+        Returns:
+            Complete learning section for prompt injection
+        """
+        # Handle both LearningContext model and legacy dict
+        if isinstance(learning_context, LearningContext):
+            context_dict = learning_context.to_legacy_dict()
+            examples = learning_context.examples
+            rejection_patterns = learning_context.rejection_patterns
+            has_sufficient = learning_context.has_sufficient_data()
+        else:
+            # Legacy dict format
+            context_dict = self._validate_learning_context(learning_context)
+            examples = {}
+            rejection_patterns = []
+            has_sufficient = context_dict.get("total_feedback_count", 0) >= 5
+
+        if not has_sufficient:
+            return None
+
+        section_parts = []
+
+        # Add basic learning context
+        basic_section = self._build_learning_context_section(context_dict)
+        if basic_section:
+            section_parts.append(basic_section)
+
+        # Add few-shot examples (v2.7.0)
+        if examples:
+            examples_section = self._build_few_shot_examples_section(examples)
+            if examples_section:
+                section_parts.append(examples_section)
+
+        # Add rejection patterns (v2.7.0)
+        if rejection_patterns:
+            patterns_section = self._build_rejection_patterns_section(
+                rejection_patterns
+            )
+            if patterns_section:
+                section_parts.append(patterns_section)
+
+        if not section_parts:
+            return None
+
+        logger.info(
+            "enhanced_learning_section_built",
+            has_basic=basic_section is not None,
+            has_examples=bool(examples),
+            has_patterns=bool(rejection_patterns),
         )
 
         return "\n".join(section_parts)
