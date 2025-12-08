@@ -485,6 +485,71 @@ changed_files_classified: total_files=N
 
 ---
 
+## Azure Resources Reference
+
+### Resource Summary
+
+| # | Resource | Purpose | Monthly Cost |
+|---|----------|---------|--------------|
+| 1 | Resource Group | Logical container | FREE |
+| 2 | Storage Account | Functions runtime + Table Storage | $1.00 |
+| 3 | Function App | Python 3.12 application | $0.10-150* |
+| 4 | Key Vault | Secure secrets | $0.50 |
+| **Total** | | | **$2-160/month** |
+
+*Flex Consumption: $0.10/month for 100 PRs. Premium EP1: $150/month.
+
+### Resource Naming Convention
+
+| Resource Type | Prefix | Example |
+|---------------|--------|---------|
+| Resource Group | rg- | rg-ai-pr-reviewer |
+| Storage Account | st | staiprreviewer (no hyphens) |
+| Function App | func- | func-ai-pr-reviewer |
+| Key Vault | kv- | kv-ai-pr-reviewer |
+
+### Resource Dependencies
+
+```
+Resource Group
+├── Storage Account (create first)
+│   ├── Table: feedback
+│   └── Table: reviewhistory
+├── Function App (depends on Storage)
+│   └── Managed Identity
+└── Key Vault
+    └── RBAC → Function App MI
+```
+
+### External Services
+
+| Service | Cost | Notes |
+|---------|------|-------|
+| Azure DevOps | FREE | Up to 5 users |
+| OpenAI API | ~$8/month | 100 PRs with diff-only |
+| Datadog | $0 | Existing infrastructure |
+
+### Scaling Guide
+
+| PRs/Month | Recommendation | Changes Needed |
+|-----------|----------------|----------------|
+| 100-500 | Flex Consumption | None |
+| 500-1,000 | Premium plan | Better performance |
+| 1,000-5,000 | Premium + scale-out | 2+ instances |
+| 5,000+ | Premium + Cosmos DB | Global scale |
+
+### Cleanup
+
+```bash
+# Delete all resources
+az group delete --name rg-ai-pr-reviewer --yes --no-wait
+
+# Purge Key Vault (if soft-delete enabled)
+az keyvault purge --name kv-ai-pr-reviewer
+```
+
+---
+
 ## Next Steps
 
 1. ✅ Deploy to Azure

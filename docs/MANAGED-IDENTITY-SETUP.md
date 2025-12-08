@@ -122,11 +122,86 @@ az functionapp config appsettings set \
 
 ### 5. Add Managed Identity to Azure DevOps
 
-Follow the detailed guide in `AZURE-DEVOPS-MANAGED-IDENTITY.md` to:
-1. Add the Managed Identity to your Azure DevOps organization
-2. Grant appropriate permissions (Code: Read, PR Threads: Contribute)
+Azure DevOps supports credential-free authentication via Managed Identity - providing superior security with zero credentials to manage.
 
-This provides credential-free, never-expiring authentication to Azure DevOps.
+**Benefits:**
+- ✅ Never expires (automatic rotation by Azure AD)
+- ✅ Cannot be extracted or leaked
+- ✅ Granular project-level permissions
+- ✅ Full Azure AD audit logs
+
+**Prerequisites:**
+- Azure DevOps Services (cloud) - NOT Azure DevOps Server (on-prem)
+- Admin access to Azure DevOps organization
+
+#### Step 5a: Add MI to Azure DevOps Organization
+
+**Via Azure Portal (Recommended):**
+
+1. Go to your **Azure Function App** in Azure Portal
+2. Under **Identity** → **System assigned**, copy the **Object (principal) ID**
+3. Go to **Azure DevOps** → Your Organization → **Organization Settings**
+4. Click **Users** → **Add users**
+5. Paste the **Object ID** in the search box (not the Function App name!)
+6. Select the identity and assign **Basic** access level
+7. Click **Add**
+
+**Via CLI:**
+```bash
+# Install Azure DevOps CLI extension
+az extension add --name azure-devops
+
+# Set your organization
+az devops configure --defaults organization=https://dev.azure.com/<your-org>
+
+# Add the managed identity as a user
+az devops user add \
+  --email-id "$PRINCIPAL_ID@azuredevops.microsoft.com" \
+  --license-type basic \
+  --send-email-invite false
+```
+
+#### Step 5b: Grant Project Permissions
+
+The Managed Identity needs specific permissions:
+
+| Resource | Permission | Why |
+|----------|------------|-----|
+| **Code** | Read | Fetch PR details and diffs |
+| **Pull Request Threads** | Read & Write | Post review comments |
+| **Project** | View | Access project metadata |
+
+**Grant permissions:**
+1. Go to **Azure DevOps** → Your Project → **Project Settings**
+2. Under **Permissions**, find your Managed Identity user
+3. Grant: Code: **Reader**, PR Threads: **Contributor**, Project: **Reader**
+
+**Or:** Add the MI to the **Contributors** group for the project.
+
+#### Step 5c: Verify Configuration
+
+```bash
+# Check authentication in logs
+az functionapp log tail \
+  --name <function-app-name> \
+  --resource-group <resource-group>
+
+# Look for: "devops_auth_success" with method="managed_identity"
+```
+
+#### Troubleshooting Azure DevOps MI
+
+**401 Unauthorized:**
+- MI not added to Azure DevOps organization
+- Solution: Search by Object ID (GUID), not Function App name
+
+**403 Forbidden:**
+- MI lacks project permissions
+- Solution: Grant Code: Reader and PR Threads: Contributor
+
+**"User not found" when adding:**
+- Use the Object ID (GUID), not the Function App name
+- Find it in Azure Portal → Function App → Identity → Object (principal) ID
 
 ## Local Development Setup
 

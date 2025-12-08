@@ -413,32 +413,48 @@ Key Insight: Python's 50ms overhead is 0.25% of total time
 
 ## Security Architecture
 
-### Defense in Depth
+CodeWarden uses a **zero-credential** architecture powered by Azure Managed Identity and Azure Key Vault for maximum security.
+
+### Authentication Methods
+
+| Service | Method | Access Control |
+|---------|--------|----------------|
+| **Azure Key Vault** | Managed Identity | RBAC (Key Vault Secrets User) |
+| **Azure Table Storage** | Managed Identity | RBAC (Storage Table Data Contributor) |
+| **Azure DevOps API** | Managed Identity | Azure AD + Project Permissions |
+| **OpenAI / Azure OpenAI** | API Key | Stored in Key Vault |
+
+### Security Layers
 
 ```
 Layer 1: Network
-├─ HTTPS only
+├─ HTTPS only (enforced by Azure)
 ├─ Function URL with key required
-└─ Webhook secret validation
+└─ Webhook secret validation (HMAC, constant-time comparison)
 
-Layer 2: Identity
+Layer 2: Identity & Access
 ├─ Managed Identity (no credentials in code)
 ├─ Azure RBAC (least privilege)
-└─ Key Vault access policies
+├─ Key Vault secrets access
+└─ Azure AD audit logs
 
-Layer 3: Data
-├─ Secrets in Key Vault
-├─ Encrypted at rest (Storage)
-└─ Encrypted in transit (TLS 1.2+)
+Layer 3: Data Protection
+├─ Secrets in Key Vault only
+├─ Encrypted at rest (Storage, Key Vault)
+├─ Encrypted in transit (TLS 1.2+)
+└─ PR diffs transient (memory only)
 
-Layer 4: Code
+Layer 4: Application Security
 ├─ No hardcoded secrets
 ├─ Input validation (Pydantic)
+├─ Path traversal prevention
+├─ Payload size limits (1MB max)
 └─ Security scanning (Bandit)
 
 Layer 5: Monitoring
-├─ Application Insights logging
-├─ Structured logs (no secrets logged)
+├─ Structured logging (no secrets logged)
+├─ Azure AD sign-in logs
+├─ Key Vault audit logs
 └─ Anomaly detection
 ```
 
@@ -459,6 +475,33 @@ Results posted to DevOps (uses Managed Identity Azure AD token)
 ```
 
 **Zero secrets in code or environment variables** ✅
+
+### Threat Mitigations
+
+| Threat | Mitigations |
+|--------|-------------|
+| **Credential Theft** | No credentials in code; MI cannot be extracted; Key Vault only |
+| **Webhook Injection** | Secret validation (HMAC); payload limits; JSON depth validation |
+| **Path Traversal** | Path sanitization; reject `../`; null byte checking |
+| **Secrets in Logs** | Structured logging with field filtering; sanitized output |
+| **API Abuse** | Webhook auth required; rate limiting; cost monitoring |
+| **AI Code Injection** | JSON-only responses; schema validation; no code execution |
+
+### Security Checklist
+
+**Pre-Deployment:**
+- [ ] System-assigned Managed Identity enabled
+- [ ] Key Vault RBAC roles configured
+- [ ] Table Storage RBAC roles assigned
+- [ ] Secrets stored in Key Vault (not env vars)
+- [ ] HTTPS enforced
+- [ ] Function-level auth on endpoints
+
+**Ongoing:**
+- [ ] Rotate OpenAI API key (30 days)
+- [ ] Review RBAC assignments monthly
+- [ ] Update dependencies quarterly
+- [ ] Monitor for authentication failures
 
 ---
 

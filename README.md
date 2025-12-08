@@ -1,267 +1,242 @@
-# CodeWarden
+<p align="center">
+  <img src="https://img.shields.io/badge/CodeWarden-AI%20PR%20Reviewer-blueviolet?style=for-the-badge&logo=azure-devops" alt="CodeWarden">
+</p>
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Type checked: mypy](http://www.mypy-lang.org/static/mypy_badge.svg)](http://mypy-lang.org/)
+<h1 align="center">CodeWarden</h1>
 
-AI-powered Pull Request reviewer for Azure DevOps with intelligent file type detection supporting 90+ languages, frameworks, and configuration formats.
+<p align="center">
+  <strong>AI-Powered Code Review for Azure DevOps</strong><br>
+  Catch bugs, security issues, and code smells before they hit production.
+</p>
 
-## ✨ Features
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python 3.12+"></a>
+  <a href="https://github.com/psf/black"><img src="https://img.shields.io/badge/code%20style-black-000000.svg" alt="Code style: black"></a>
+  <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" alt="Ruff"></a>
+  <a href="http://mypy-lang.org/"><img src="http://www.mypy-lang.org/static/mypy_badge.svg" alt="Type checked: mypy"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"></a>
+</p>
 
-- **Multi-Technology Support:** 90+ file types including Python, TypeScript, Java, C#, Go, Terraform, Kubernetes, Docker, and more
-- **Diff-Only Analysis:** 50-85% token savings vs. full-file reviews
-- **Feedback Learning:** Adapts to team preferences over time
-- **Enterprise Security:** Azure Key Vault, Managed Identity, structured logging
-- **Type-Safe:** Pydantic models, mypy checking, comprehensive testing
-
-## 🏗️ Architecture Overview
-
-### High-Level Architecture
-
-```
-┌─────────────────┐
-│  Azure DevOps   │
-│   (Webhook)     │
-└────────┬────────┘
-         │ PR Event
-         ▼
-┌────────────────────────────────────────────────────────┐
-│              Azure Functions (Python 3.12)             │
-│                                                        │
-│  ┌──────────────┐    ┌──────────────┐                  │
-│  │ HTTP Trigger │    │Timer Trigger │                  │
-│  │ pr_webhook   │    │  feedback    │                  │
-│  └──────┬───────┘    └──────┬───────┘                  │
-│         │                    │                         │
-│         ▼                    ▼                         │
-│  ┌─────────────────────────────────────┐               │
-│  │      PR Review Orchestrator         │               │
-│  │  • Fetch changed files              │               │
-│  │  • Parse diffs (diff-only)          │               │
-│  │  • Determine strategy (3-tier)      │               │
-│  │  • Apply learning context           │               │
-│  │  • Execute AI review                │               │
-│  │  • Post results to DevOps           │               │
-│  │  • Log to Datadog (via agent)       │               │
-│  └─────────────────────────────────────┘               │
-└──────────┬──────────────────────────────┬──────────────┘
-           │                              │
-    ┌──────▼───────┐              ┌──────▼───────┐
-    │  Azure Key   │              │   OpenAI     │
-    │    Vault     │              │     API      │
-    │  (Secrets)   │              │ (GPT-4, etc) │
-    └──────────────┘              └──────────────┘
-           │
-    ┌──────▼────────────────────────────────┐
-    │    Storage Layer                      │
-    │                                       │
-    │  Azure Table Storage - $0.10/mo       │
-    │    - Feedback tracking                │
-    │    - Review history                   │
-    └───────────────────────────────────────┘
-
-    ┌──────────────────────────────────────┐
-    │    Monitoring (Your Choice)          │
-    │                                      │
-    │  Datadog (Recommended)               │
-    │    - Logs via Datadog Agent          │
-    │    - Metrics & APM                   │
-    │    - Alerts & dashboards             │
-    │    - Uses existing infrastructure    │
-    └──────────────────────────────────────┘
-```
-
-### Review Workflow
-
-```
-1. PR Created/Updated → Webhook → Azure Function
-2. Fetch PR details & parse diffs (diff-only analysis)
-3. Determine review strategy (single-pass, chunked, or hierarchical)
-4. Apply learning context from past feedback
-5. AI review with technology-specific prompts
-6. Post results to Azure DevOps (summary + inline comments)
-7. Track feedback for continuous improvement
-```
-
-### Technology Stack
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Runtime** | Azure Functions (Python 3.12) | Serverless compute |
-| **API Gateway** | Azure Functions HTTP Trigger | Webhook endpoint |
-| **AI/LLM** | Azure AI Foundry GPT-5 (recommended) or OpenAI | Code review analysis |
-| **Storage** | Azure Table Storage | Feedback & history |
-| **Secrets** | Azure Key Vault | Secure credential storage |
-| **Monitoring** | Datadog (your existing infrastructure) | Logging, metrics & APM |
-| **DevOps** | Azure DevOps API | PR integration |
-
-### Data Storage
-
-**Azure Table Storage** stores feedback tracking and review history:
-- Cost-effective: $0.10/month vs Cosmos DB $25/month
-- Fast key-value access (sub-100ms)
-- Tracks feedback (accepted/rejected suggestions) and review metrics
-
-For global distribution or complex queries, consider Cosmos DB.
-
-📖 **[See detailed architecture documentation](docs/ARCHITECTURE.md)** for complete system design and data models.
+<p align="center">
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-features">Features</a> •
+  <a href="docs/DEPLOYMENT-GUIDE.md">Deploy</a> •
+  <a href="docs/ARCHITECTURE.md">Architecture</a> •
+  <a href="CONTRIBUTING.md">Contribute</a>
+</p>
 
 ---
 
-## 🚀 Quick Start
+## Why CodeWarden?
 
-### Prerequisites
+<table>
+<tr>
+<td width="50%">
 
-- Python 3.12+
-- Azure subscription
-- Azure DevOps organization
-- OpenAI API key (or Azure AI Foundry endpoint)
-- Datadog account (optional, for monitoring)
+### The Problem
 
-### Installation
+- Manual code reviews are slow and inconsistent
+- Security issues slip through to production
+- Junior developers wait hours for feedback
+- Existing tools cost $400-800/month
 
-```bash
-# Clone repository
-git clone <your-repo>
-cd ai-pr-reviewer
+</td>
+<td width="50%">
 
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
+### The Solution
 
-# Install dependencies
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+- **Instant AI reviews** on every PR
+- **90+ languages** and frameworks supported
+- **Self-hosted** in your Azure subscription
+- **$10-160/month** total cost
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your values
+</td>
+</tr>
+</table>
 
-# Run locally
-func start
+---
+
+## Key Metrics
+
+<p align="center">
+
+| 🚀 **Performance** | 💰 **Cost Savings** | 🔒 **Security** |
+|:------------------:|:-------------------:|:---------------:|
+| 5-30 second reviews | 78% cheaper than alternatives | Zero credentials in code |
+| 50-88% token savings | ~$10/mo development | Managed Identity auth |
+| 90+ file types | ~$160/mo production | Azure Key Vault secrets |
+
+</p>
+
+---
+
+## Features
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🎯 Smart Analysis
+- Diff-only review (not full files)
+- Technology-specific prompts
+- Context-aware suggestions
+- Severity classification
+
+</td>
+<td width="33%" valign="top">
+
+### 🧠 Learns Over Time
+- Tracks accepted/rejected suggestions
+- Adapts to team preferences
+- Detects recurring patterns
+- Improves accuracy continuously
+
+</td>
+<td width="33%" valign="top">
+
+### 🏢 Enterprise Ready
+- Azure Managed Identity
+- Key Vault integration
+- Structured logging (Datadog)
+- Full audit trail
+
+</td>
+</tr>
+</table>
+
+### Supported Technologies
+
+```
+Languages:     Python, TypeScript, JavaScript, Java, C#, Go, Rust, Ruby, PHP, Swift, Kotlin...
+Infrastructure: Terraform, Ansible, CloudFormation, Bicep, Pulumi, ARM Templates...
+Containers:    Docker, Kubernetes, Helm, Docker Compose...
+Config:        YAML, JSON, TOML, XML, .env, nginx, Apache...
+And 70+ more file types with specialized review prompts.
 ```
 
-### Deploy to Azure
+---
+
+## Architecture
+
+```
+┌──────────────┐      ┌─────────────────────────────────────┐      ┌──────────────┐
+│ Azure DevOps │─────▶│     Azure Functions (Python)       │─────▶│   OpenAI /   │
+│   Webhook    │      │                                     │      │  Azure AI    │
+└──────────────┘      │  ┌─────────────────────────────┐    │      └──────────────┘
+                      │  │    CodeWarden Reviewer      │    │
+                      │  │                             │    │      ┌──────────────┐
+                      │  │  • Parse diffs              │    │─────▶│  Key Vault   │
+                      │  │  • AI review                │    │      │  (Secrets)   │
+                      │  │  • Post comments            │    │      └──────────────┘
+                      │  │  • Track feedback           │    │
+                      │  └─────────────────────────────┘    │      ┌──────────────┐
+                      │                                     │─────▶│Table Storage │
+                      └─────────────────────────────────────┘      │ (Feedback)   │
+                                                                   └──────────────┘
+```
+
+**[View detailed architecture →](docs/ARCHITECTURE.md)**
+
+---
+
+## Quick Start
+
+### 1. Clone & Install
 
 ```bash
-# See DEPLOYMENT-GUIDE.md for complete instructions
+git clone https://github.com/Swaeltjie/codewarden.git
+cd codewarden
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Configure
+
+```bash
+az login
+cp .env.example .env
+# Edit .env with your Azure DevOps org and Key Vault URL
+```
+
+### 3. Run Locally
+
+```bash
+func start
+# Webhook endpoint: http://localhost:7071/api/pr-webhook
+```
+
+### 4. Deploy to Azure
+
+```bash
 func azure functionapp publish <your-function-app> --python
 ```
 
-## 📁 Project Structure
-
-```
-ai-pr-reviewer/
-├── function_app.py              # Azure Functions entry point
-├── requirements.txt             # Production dependencies
-├── requirements-dev.txt         # Development dependencies
-├── host.json                    # Function runtime configuration
-│
-├── src/
-│   ├── handlers/                # HTTP/Timer trigger handlers
-│   │   ├── pr_webhook.py       # Main PR orchestrator
-│   │   └── feedback_collector.py
-│   │
-│   ├── services/                # Business logic
-│   │   ├── azure_devops.py     # DevOps API client
-│   │   ├── ai_client.py        # OpenAI/Anthropic client
-│   │   ├── diff_parser.py      # Git diff parsing
-│   │   ├── feedback_tracker.py # Learning system
-│   │   └── pattern_detector.py # Historical analysis
-│   │
-│   ├── models/                  # Pydantic data models
-│   ├── prompts/                 # AI prompts per technology
-│   └── utils/                   # Configuration, logging, metrics
-│
-└── tests/                       # Comprehensive test suite
-    ├── unit/
-    ├── integration/
-    └── fixtures/
-```
-
-## 🎯 Why Python?
-
-Python provides excellent AI/LLM library support and rapid development. The ~1s cold start overhead is negligible compared to 20s average review times.
-
-## 📊 Performance
-
-**Token Savings (Diff-Only):** 50-88% reduction vs. full-file analysis
-**Review Times:** 5-8s (small), 12-18s (medium), 25-40s (large PRs)
-
-## 🛠️ Development
-
-### Run Tests
-
-```bash
-# All tests
-pytest
-
-# With coverage
-pytest --cov=src --cov-report=html
-
-# Specific test
-pytest tests/unit/test_diff_parser.py -v
-```
-
-### Code Quality
-
-```bash
-# Format code
-black src/
-
-# Lint
-ruff check src/ --fix
-
-# Type checking
-mypy src/
-
-# Security scan
-bandit -r src/
-
-# All checks
-pre-commit run --all-files
-```
-
-## 📖 Documentation
-
-### Core Documentation
-- **[Architecture Overview](docs/ARCHITECTURE.md)** - System design, data models, and storage decisions
-- **[Deployment Guide](docs/DEPLOYMENT-GUIDE.md)** - Complete Azure deployment walkthrough
-- **[Security Architecture](docs/ARCHITECTURE-SECURITY.md)** - Zero-credential architecture and threat model
-
-### Setup Guides
-- **[Managed Identity Setup](docs/MANAGED-IDENTITY-SETUP.md)** - Credential-free authentication
-- **[Azure DevOps MI Guide](docs/AZURE-DEVOPS-MANAGED-IDENTITY.md)** - DevOps-specific MI configuration
-- **[Datadog Integration](docs/DATADOG-INTEGRATION.md)** - Monitoring and observability
-
-### Reference
-- **[Azure Resources](docs/AZURE-RESOURCES.md)** - Complete resource inventory and costs
-- **[Version Control](docs/VERSION-CONTROL.md)** - Changelog and version history
-
-## 🔒 Security
-
-- ✅ Secrets stored in Azure Key Vault
-- ✅ Managed Identity (no credentials in code)
-- ✅ Function-level authorization keys
-- ✅ Webhook secret validation
-- ✅ HTTPS only
-- ✅ Security scanning with Bandit
-
-## 💰 Cost
-
-**Development:** ~$10/month (Consumption plan + infrastructure)
-**Production:** ~$160/month (Premium EP1 + infrastructure)
-
-**vs. Alternatives:**
-- CodeRabbit: $380-780/month (20 users)
-- GitHub Copilot: $200-780/month (20 users)
-- **CodeWarden: $10-160/month** (3-78x cheaper)
-
-## 📝 License
-
-MIT License - see LICENSE file for details
+**[Full deployment guide →](docs/DEPLOYMENT-GUIDE.md)**
 
 ---
 
-**Ready to deploy!** See [DEPLOYMENT-GUIDE.md](docs/DEPLOYMENT-GUIDE.md) for complete instructions.
+## Cost Comparison
+
+| Solution | Monthly Cost (20 users) | Self-Hosted | Azure DevOps |
+|----------|-------------------------|:-----------:|:------------:|
+| **CodeWarden** | **$10-160** | ✅ | ✅ |
+| CodeRabbit | $380-780 | ❌ | ✅ |
+| GitHub Copilot | $200-780 | ❌ | ❌ |
+| Codacy | $300-600 | ❌ | ⚠️ |
+
+**Save 78% or more** compared to commercial alternatives.
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| **[Architecture](docs/ARCHITECTURE.md)** | System design, security, data models |
+| **[Deployment Guide](docs/DEPLOYMENT-GUIDE.md)** | Step-by-step Azure setup |
+| **[Managed Identity](docs/MANAGED-IDENTITY-SETUP.md)** | Credential-free authentication |
+| **[Datadog Integration](docs/DATADOG-INTEGRATION.md)** | Monitoring & observability |
+
+---
+
+## Development
+
+```bash
+# Run tests
+pytest --cov=src
+
+# Code quality
+pre-commit run --all-files
+
+# Type checking
+mypy src/
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+
+---
+
+## Security
+
+- ✅ **Zero credentials in code** - Managed Identity for all Azure services
+- ✅ **Secrets in Key Vault** - API keys never in config files
+- ✅ **Webhook validation** - HMAC signature verification
+- ✅ **HTTPS only** - All traffic encrypted
+- ✅ **Audit logging** - Full trail in Azure AD & Datadog
+
+---
+
+<p align="center">
+  <strong>Ready to improve your code reviews?</strong><br><br>
+  <a href="docs/DEPLOYMENT-GUIDE.md"><img src="https://img.shields.io/badge/Deploy%20Now-blue?style=for-the-badge" alt="Deploy Now"></a>
+  &nbsp;&nbsp;
+  <a href="docs/ARCHITECTURE.md"><img src="https://img.shields.io/badge/Learn%20More-gray?style=for-the-badge" alt="Learn More"></a>
+</p>
+
+---
+
+<p align="center">
+  <a href="LICENSE">MIT License</a> •
+  <a href="CONTRIBUTING.md">Contributing</a> •
+  <a href="https://github.com/Swaeltjie/codewarden/issues">Issues</a>
+</p>
