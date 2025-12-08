@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.6.33 - URL encoding for branch names and file paths in query params
+Version: 2.6.35 - API corrections: removed invalid diffContentType, added versionType params
 """
 import aiohttp
 import asyncio
@@ -436,16 +436,28 @@ class AzureDevOpsClient:
         base_version = strip_refs_prefix(target_commit)
         target_version = strip_refs_prefix(source_commit)
 
+        # v2.6.35: Determine version type (branch or commit) for API clarity
+        # Commit SHAs are 40 hex characters; otherwise assume branch name
+        def get_version_type(version: str) -> str:
+            is_sha = len(version) == 40 and all(c in '0123456789abcdefABCDEF' for c in version)
+            return "commit" if is_sha else "branch"
+
+        base_version_type = get_version_type(base_version)
+        target_version_type = get_version_type(target_version)
+
         # URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         encoded_project = quote(project_id, safe='')
         # URL-encode branch names for special characters (spaces, #, ?, &)
         encoded_base = quote(base_version, safe='')
         encoded_target = quote(target_version, safe='')
 
+        # v2.6.35: Fixed API call - removed non-existent diffContentType parameter,
+        # added baseVersionType and targetVersionType for proper version interpretation
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/{repository_id}/diffs/commits"
-            f"?baseVersion={encoded_base}&targetVersion={encoded_target}"
-            f"&diffContentType=unified&api-version={self.api_version}"
+            f"?baseVersion={encoded_base}&baseVersionType={base_version_type}"
+            f"&targetVersion={encoded_target}&targetVersionType={target_version_type}"
+            f"&api-version={self.api_version}"
         )
 
         logger.debug(
@@ -538,7 +550,7 @@ class AzureDevOpsClient:
         Returns:
             File content as string, or None if file doesn't exist
         """
-        # v2.6.22: Use versionType=branch for branch names, commit for SHAs
+        # v2.6.22: Use versionDescriptor.versionType=branch for branch names, commit for SHAs
         # Branch names: main, feature/xyz (no refs/heads/ prefix)
         # Commit SHAs: 40-char hex strings
         is_commit_sha = len(version_ref) == 40 and all(c in '0123456789abcdef' for c in version_ref.lower())
@@ -547,13 +559,15 @@ class AzureDevOpsClient:
         # v2.6.24: CRITICAL - Must include download=true OR use Accept header
         # Without this, Azure DevOps returns JSON metadata instead of file content
         # v2.6.29: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
+        # v2.6.35: Use official versionDescriptor.* parameter names per API docs
         encoded_project = quote(project_id, safe='')
         # URL-encode file path (preserve / as path separator) and version ref
         encoded_path = quote(file_path, safe='/')
         encoded_version = quote(version_ref, safe='')
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/{repository_id}/items"
-            f"?path={encoded_path}&versionType={version_type}&version={encoded_version}"
+            f"?path={encoded_path}&versionDescriptor.versionType={version_type}"
+            f"&versionDescriptor.version={encoded_version}"
             f"&download=true&api-version={self.api_version}"
         )
 

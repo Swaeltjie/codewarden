@@ -5,6 +5,47 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.35] - 2025-12-08
+
+### Fixed - Azure DevOps API Corrections per Official v7.1 Documentation
+
+**Root Cause:** Web search verification against official Microsoft documentation revealed API parameter issues.
+
+**Changes:**
+
+1. **Diffs API - Removed Invalid Parameter**
+   - Removed `diffContentType=unified` - this parameter does NOT exist in the API
+   - Was being silently ignored by Azure DevOps
+
+2. **Diffs API - Added Version Type Parameters**
+   - Added `baseVersionType` and `targetVersionType` parameters
+   - Auto-detects whether version is a branch name or commit SHA
+   - Provides explicit version interpretation to API
+
+3. **Items API - Corrected Parameter Names**
+   - Changed `versionType` → `versionDescriptor.versionType`
+   - Changed `version` → `versionDescriptor.version`
+   - Now matches official API documentation format
+
+**API Verification Status:**
+| Endpoint | Status |
+|----------|--------|
+| Get Pull Request | ✅ Correct |
+| Get PR Iterations | ✅ Correct |
+| Get Iteration Changes | ✅ Correct |
+| Get Diffs | ✅ Fixed |
+| Get Items | ✅ Fixed |
+| Create Thread | ✅ Correct |
+| Get Threads | ✅ Correct |
+
+**Files Changed:**
+- `src/services/azure_devops.py` - API parameter corrections
+- `src/utils/config.py` - Version bump to 2.6.35
+
+**Reference:** https://learn.microsoft.com/rest/api/azure/devops/git/
+
+---
+
 ## [2.6.34] - 2025-12-08
 
 ### Fixed - Bug Fixes from Code Review
