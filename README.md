@@ -5,11 +5,11 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Type checked: mypy](http://www.mypy-lang.org/static/mypy_badge.svg)](http://mypy-lang.org/)
 
-AI-powered Pull Request reviewer for Azure DevOps supporting Terraform, Ansible, Azure Pipelines, and JSON configurations.
+AI-powered Pull Request reviewer for Azure DevOps with intelligent file type detection supporting 90+ languages, frameworks, and configuration formats.
 
 ## ✨ Features
 
-- **Multi-Technology Support:** Terraform, Ansible, Azure Pipelines, JSON
+- **Multi-Technology Support:** 90+ file types including Python, TypeScript, Java, C#, Go, Terraform, Kubernetes, Docker, and more
 - **Diff-Only Analysis:** 50-85% token savings vs. full-file reviews
 - **Feedback Learning:** Adapts to team preferences over time
 - **Enterprise Security:** Azure Key Vault, Managed Identity, structured logging

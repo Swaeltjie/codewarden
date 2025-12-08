@@ -5,7 +5,7 @@ AI PR Reviewer - Main Azure Functions Entry Point
 This module defines the Azure Functions HTTP triggers and orchestrates
 the PR review workflow.
 
-Version: 2.5.0 - Timer retry logic, centralized version, concurrency limiting
+Version: 2.6.33 - Input validation for days parameter
 """
 import azure.functions as func
 import logging
@@ -29,6 +29,9 @@ from src.utils.constants import (
     RATE_LIMIT_MAX_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
     DEFAULT_RETRY_AFTER_SECONDS,
+    IDEMPOTENCY_STATS_MIN_DAYS,
+    IDEMPOTENCY_STATS_MAX_DAYS,
+    IDEMPOTENCY_STATS_DEFAULT_DAYS,
 )
 
 # Dry-run mode - skips posting to Azure DevOps
@@ -542,7 +545,23 @@ async def reliability_health_check(req: func.HttpRequest) -> func.HttpResponse:
         elif feature == 'cache':
             result = await handler.get_cache_statistics(repository=repository)
         elif feature == 'idempotency':
-            days = int(req.params.get('days', 7))
+            # Validate days parameter with bounds checking
+            try:
+                days = int(req.params.get('days', IDEMPOTENCY_STATS_DEFAULT_DAYS))
+                if days < IDEMPOTENCY_STATS_MIN_DAYS or days > IDEMPOTENCY_STATS_MAX_DAYS:
+                    return func.HttpResponse(
+                        json.dumps({
+                            "error": f"days must be between {IDEMPOTENCY_STATS_MIN_DAYS} and {IDEMPOTENCY_STATS_MAX_DAYS}"
+                        }),
+                        status_code=400,
+                        mimetype="application/json"
+                    )
+            except ValueError:
+                return func.HttpResponse(
+                    json.dumps({"error": "days must be a valid integer"}),
+                    status_code=400,
+                    mimetype="application/json"
+                )
             result = await handler.get_idempotency_statistics(days=days)
         else:
             # Full health status

@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.6.25 - Fixed diff generation for unidiff compatibility
+Version: 2.6.33 - Added statistics query validation constants
 """
 
 # =============================================================================
@@ -178,6 +178,15 @@ IDEMPOTENCY_TTL_HOURS = 48
 # Table name for storing idempotency keys
 IDEMPOTENCY_TABLE_NAME = 'idempotency'
 
+# Minimum days for idempotency statistics query
+IDEMPOTENCY_STATS_MIN_DAYS = 1
+
+# Maximum days for idempotency statistics query
+IDEMPOTENCY_STATS_MAX_DAYS = 365
+
+# Default days for idempotency statistics query
+IDEMPOTENCY_STATS_DEFAULT_DAYS = 7
+
 # =============================================================================
 # RESPONSE CACHE SETTINGS
 # =============================================================================
@@ -323,7 +332,7 @@ DEFAULT_MAX_TOKENS = 128000
 DEFAULT_LOG_LEVEL = "INFO"
 
 # =============================================================================
-# FILE TYPE REGISTRY (v2.6.0 - Universal Code Review)
+# FILE TYPE REGISTRY
 # =============================================================================
 
 # Default token estimate for unknown file types
@@ -345,7 +354,7 @@ MAX_COMMON_ISSUES_PER_CATEGORY = 5
 MAX_PERFORMANCE_TIPS_PER_CATEGORY = 3
 
 # =============================================================================
-# CONTEXT MANAGER / REVIEW STRATEGY (v2.6.5)
+# CONTEXT MANAGER / REVIEW STRATEGY
 # =============================================================================
 
 # Maximum lines per file for token estimation (prevents integer overflow)
@@ -364,14 +373,14 @@ STRATEGY_MEDIUM_TOKEN_LIMIT = 40_000   # Max tokens for chunked review
 TOKENS_PER_LINE_ESTIMATE = 6
 
 # =============================================================================
-# DIFF PARSING (v2.6.5)
+# DIFF PARSING
 # =============================================================================
 
 # Maximum lines in a single hunk (DoS protection)
 MAX_HUNK_LINES = 10_000
 
 # =============================================================================
-# REVIEW RESULT LIMITS (v2.6.5)
+# REVIEW RESULT LIMITS
 # =============================================================================
 
 # Maximum individual issue errors to log before summarizing
@@ -384,7 +393,7 @@ MAX_AGGREGATED_TOKENS = 9_999_999
 MAX_AGGREGATED_COST = 9_999.99
 
 # =============================================================================
-# QUERY LIMITS (v2.6.5)
+# QUERY LIMITS
 # =============================================================================
 
 # Maximum entries to process in idempotency statistics query

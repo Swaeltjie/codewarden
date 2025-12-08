@@ -4,7 +4,7 @@ Configuration Management
 
 Handles application settings and Azure Key Vault integration for secrets.
 
-Version: 2.6.25 - Fixed diff generation for unidiff compatibility
+Version: 2.6.33 - URL encoding fixes for branch names and file paths
 """
 from pydantic_settings import BaseSettings
 from azure.identity import DefaultAzureCredential
@@ -22,7 +22,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Application version - single source of truth
-__version__ = "2.6.32"
+__version__ = "2.6.33"
 
 
 class Settings(BaseSettings):

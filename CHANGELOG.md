@@ -5,11 +5,40 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.33] - 2025-12-08
+
+### Fixed - Code Review Bug Fixes and Documentation Updates
+
+**Changes:**
+
+1. **URL Encoding for Branch Names and File Paths**
+   - Added URL encoding for `baseVersion` and `targetVersion` query parameters in `get_file_diff()`
+   - Added URL encoding for `path` and `version` query parameters in `_get_file_content()`
+   - Handles branches with special characters (spaces, #, ?, &)
+
+2. **Input Validation for Statistics API**
+   - Added bounds checking for `days` parameter in idempotency statistics endpoint
+   - Returns 400 error for invalid values instead of 500
+   - Added constants: `IDEMPOTENCY_STATS_MIN_DAYS`, `IDEMPOTENCY_STATS_MAX_DAYS`, `IDEMPOTENCY_STATS_DEFAULT_DAYS`
+
+3. **Documentation Updates**
+   - Updated README to reflect 90+ supported file types
+   - Removed company-identifiable information from changelog and code comments
+
+**Files Changed:**
+- `src/services/azure_devops.py` - URL encoding for query parameters
+- `src/utils/constants.py` - Added idempotency statistics constants
+- `function_app.py` - Input validation for days parameter
+- `README.md` - Updated supported file types
+- `CHANGELOG.md` - Removed company-identifiable info
+
+---
+
 ## [2.6.32] - 2025-12-08
 
 ### Fixed - Complete URL Encoding for All Azure DevOps API Endpoints
 
-**Problem:** Multiple Azure DevOps API endpoints were missing URL encoding for project names containing spaces. This affected projects like "GPP DevOps" throughout the entire PR review workflow.
+**Problem:** Multiple Azure DevOps API endpoints were missing URL encoding for project names containing spaces. This affected projects like "My Project" throughout the entire PR review workflow.
 
 **Root Cause:** Only some methods (`get_file_diff`, `_get_file_content`, `_get_pr_threads`) had been updated with URL encoding. Other critical methods were missing this fix.
 
@@ -40,13 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed - Feedback Collection Thread Fetch URL Encoding
 
-**Problem:** The hourly feedback collector was failing to fetch PR threads for projects with spaces in their name (e.g., "GPP DevOps"). The `_get_pr_threads` API call was silently failing, resulting in `feedback_entries: 0`.
+**Problem:** The hourly feedback collector was failing to fetch PR threads for projects with spaces in their name (e.g., "My Project"). The `_get_pr_threads` API call was silently failing, resulting in `feedback_entries: 0`.
 
-**Root Cause:** The `_get_pr_threads` method in `azure_devops.py` was not URL-encoding the project name before using it in the API URL. Projects with spaces (like "GPP DevOps") caused 400 Bad Request errors or returned empty results.
+**Root Cause:** The `_get_pr_threads` method in `azure_devops.py` was not URL-encoding the project name before using it in the API URL. Projects with spaces (like "My Project") caused 400 Bad Request errors or returned empty results.
 
 **Fix:** Added URL encoding to `_get_pr_threads`:
 ```python
-# v2.6.31: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+# v2.6.31: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
 encoded_project = quote(project_id, safe='')
 
 url = (
@@ -91,7 +120,7 @@ query_filter = f"reviewed_at ge '{cutoff_time.isoformat()}'"
 
 ### Fixed - Diff API Project Name and URL Encoding
 
-**Problem:** PR reviews were failing with `400 Bad Request` error when fetching file diffs. The error occurred for projects with spaces in their name (e.g., "GPP DevOps").
+**Problem:** PR reviews were failing with `400 Bad Request` error when fetching file diffs. The error occurred for projects with spaces in their name (e.g., "My Project").
 
 **Root Causes:**
 1. `get_file_diff()` was passing `project_id` (UUID) but the Azure DevOps diffs API requires the project NAME
@@ -116,7 +145,7 @@ diff = await self.devops_client.get_file_diff(
 ```python
 from urllib.parse import quote
 
-# URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+# URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
 encoded_project = quote(project_id, safe='')
 url = f"{self.base_url}/{encoded_project}/_apis/git/repositories/..."
 ```

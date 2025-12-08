@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.6.32 - URL encoding for all Azure DevOps API endpoints
+Version: 2.6.33 - URL encoding for branch names and file paths in query params
 """
 import aiohttp
 import asyncio
@@ -228,7 +228,7 @@ class AzureDevOpsClient:
             DevOpsAuthError: If authentication fails
             DevOpsRateLimitError: If rate limited
         """
-        # v2.6.32: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        # v2.6.32: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         encoded_project = quote(project_id, safe='')
 
         url = (
@@ -316,7 +316,7 @@ class AzureDevOpsClient:
         Returns:
             List of file changes with metadata
         """
-        # v2.6.32: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        # v2.6.32: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         encoded_project = quote(project_id, safe='')
 
         # Get iterations to find commits
@@ -436,12 +436,15 @@ class AzureDevOpsClient:
         base_version = strip_refs_prefix(target_commit)
         target_version = strip_refs_prefix(source_commit)
 
-        # URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        # URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         encoded_project = quote(project_id, safe='')
+        # URL-encode branch names for special characters (spaces, #, ?, &)
+        encoded_base = quote(base_version, safe='')
+        encoded_target = quote(target_version, safe='')
 
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/{repository_id}/diffs/commits"
-            f"?baseVersion={base_version}&targetVersion={target_version}"
+            f"?baseVersion={encoded_base}&targetVersion={encoded_target}"
             f"&diffContentType=unified&api-version={self.api_version}"
         )
 
@@ -543,11 +546,14 @@ class AzureDevOpsClient:
 
         # v2.6.24: CRITICAL - Must include download=true OR use Accept header
         # Without this, Azure DevOps returns JSON metadata instead of file content
-        # v2.6.29: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        # v2.6.29: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         encoded_project = quote(project_id, safe='')
+        # URL-encode file path (preserve / as path separator) and version ref
+        encoded_path = quote(file_path, safe='/')
+        encoded_version = quote(version_ref, safe='')
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/{repository_id}/items"
-            f"?path={file_path}&versionType={version_type}&version={version_ref}"
+            f"?path={encoded_path}&versionType={version_type}&version={encoded_version}"
             f"&download=true&api-version={self.api_version}"
         )
 
@@ -928,7 +934,7 @@ class AzureDevOpsClient:
             # Truncate comment with warning
             comment = comment[:MAX_COMMENT_LENGTH - 100] + "\n\n... (Comment truncated due to length limit)"
 
-        # v2.6.32: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        # v2.6.32: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         encoded_project = quote(project_id, safe='')
 
         url = (
@@ -1006,7 +1012,7 @@ class AzureDevOpsClient:
         Returns:
             Created thread object
         """
-        # v2.6.32: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        # v2.6.32: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         encoded_project = quote(project_id, safe='')
 
         url = (
@@ -1093,7 +1099,7 @@ class AzureDevOpsClient:
         Returns:
             List of thread objects with comments and status
         """
-        # v2.6.31: URL-encode project name for spaces (e.g., "GPP DevOps" -> "GPP%20DevOps")
+        # v2.6.31: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         encoded_project = quote(project_id, safe='')
 
         url = (
