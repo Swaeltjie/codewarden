@@ -4,17 +4,21 @@ Azure Table Storage Utilities
 
 Helper functions for interacting with Azure Table Storage using Managed Identity.
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.7.6 - Enhanced OData sanitization, input validation, retry logic
 """
 from azure.data.tables import TableServiceClient, TableClient
 from azure.identity import DefaultAzureCredential
-from azure.core.exceptions import ResourceExistsError, ServiceRequestError
-from typing import Generator, Optional
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ServiceRequestError,
+    HttpResponseError,
+)
+from typing import Dict, Any, Generator, Optional
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type
+    retry_if_exception,
 )
 
 from src.utils.config import get_settings
@@ -24,26 +28,32 @@ from src.utils.constants import (
     TABLE_STORAGE_RETRY_MIN_WAIT,
     TABLE_STORAGE_RETRY_MAX_WAIT,
     TABLE_STORAGE_BATCH_SIZE,
+    RETRY_BACKOFF_MULTIPLIER,
 )
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Maximum OData value length (DoS protection)
+MAX_ODATA_VALUE_LENGTH = 1000
 
-def sanitize_odata_value(value: str) -> str:
+
+def sanitize_odata_value(value: str, max_length: int = MAX_ODATA_VALUE_LENGTH) -> str:
     """
     Sanitize string value for use in OData query filters.
 
-    Prevents OData injection attacks by escaping single quotes.
-
-    OData string literals use single quotes, so any single quote in the value
-    must be escaped by doubling it (SQL-style escaping).
+    Prevents OData injection attacks by validating and escaping values.
 
     Args:
         value: String value to sanitize
+        max_length: Maximum allowed length (default: 1000)
 
     Returns:
         Sanitized string safe for use in OData queries
+
+    Raises:
+        TypeError: If value is not a string
+        ValueError: If value contains null bytes or exceeds max length
 
     Example:
         >>> sanitize_odata_value("O'Reilly")
@@ -58,8 +68,28 @@ def sanitize_odata_value(value: str) -> str:
     if not isinstance(value, str):
         raise TypeError(f"Expected string, got {type(value).__name__}")
 
+    # Check for null bytes (security)
+    if "\x00" in value:
+        raise ValueError("Value contains null bytes")
+
+    # Check length to prevent DoS
+    if len(value) > max_length:
+        raise ValueError(f"Value exceeds maximum length of {max_length}")
+
     # Escape single quotes by doubling them (OData/SQL standard)
     return value.replace("'", "''")
+
+
+def _is_transient_error(exception: Exception) -> bool:
+    """Check if exception is a transient error worth retrying."""
+    if isinstance(exception, ServiceRequestError):
+        return True
+    if isinstance(exception, HttpResponseError):
+        # Retry on 5xx server errors and 429 rate limit
+        return exception.status_code >= 500 or exception.status_code == 429
+    if isinstance(exception, (ConnectionError, TimeoutError)):
+        return True
+    return False
 
 
 class TableServiceClientManager:
@@ -68,7 +98,8 @@ class TableServiceClientManager:
 
     Fixes resource leak by properly managing DefaultAzureCredential lifecycle.
     """
-    _instance: Optional['TableServiceClientManager'] = None
+
+    _instance: Optional["TableServiceClientManager"] = None
     _credential: Optional[DefaultAzureCredential] = None
     _client: Optional[TableServiceClient] = None
 
@@ -99,17 +130,18 @@ class TableServiceClientManager:
             self._credential = DefaultAzureCredential()
 
             # Construct the table service endpoint
-            table_endpoint = f"https://{settings.AZURE_STORAGE_ACCOUNT_NAME}.table.core.windows.net"
+            table_endpoint = (
+                f"https://{settings.AZURE_STORAGE_ACCOUNT_NAME}.table.core.windows.net"
+            )
 
             self._client = TableServiceClient(
-                endpoint=table_endpoint,
-                credential=self._credential
+                endpoint=table_endpoint, credential=self._credential
             )
 
             logger.info(
                 "table_service_client_created",
                 storage_account=settings.AZURE_STORAGE_ACCOUNT_NAME,
-                auth_method="managed_identity"
+                auth_method="managed_identity",
             )
 
         return self._client
@@ -143,10 +175,10 @@ def get_table_service_client() -> TableServiceClient:
 def get_table_client(table_name: str) -> TableClient:
     """
     Get Table client for specific table.
-    
+
     Args:
         table_name: Name of table (e.g., 'feedback', 'reviewhistory')
-        
+
     Returns:
         TableClient instance for the specified table
     """
@@ -157,12 +189,12 @@ def get_table_client(table_name: str) -> TableClient:
 @retry(
     stop=stop_after_attempt(TABLE_STORAGE_RETRY_ATTEMPTS),
     wait=wait_exponential(
-        multiplier=1,
+        multiplier=RETRY_BACKOFF_MULTIPLIER,
         min=TABLE_STORAGE_RETRY_MIN_WAIT,
-        max=TABLE_STORAGE_RETRY_MAX_WAIT
+        max=TABLE_STORAGE_RETRY_MAX_WAIT,
     ),
-    retry=retry_if_exception_type(ServiceRequestError),
-    reraise=True
+    retry=retry_if_exception(_is_transient_error),
+    reraise=True,
 )
 def ensure_table_exists(table_name: str) -> None:
     """
@@ -174,25 +206,28 @@ def ensure_table_exists(table_name: str) -> None:
         table_name: Name of table to create
 
     Raises:
+        ValueError: If table_name is invalid
         RuntimeError: If table creation fails after retries
     """
+    # Validate table name
+    if not table_name:
+        raise ValueError("table_name cannot be empty")
+    if "\x00" in table_name or ".." in table_name:
+        raise ValueError(f"Invalid table name: {table_name}")
+
     try:
         service = get_table_service_client()
         service.create_table_if_not_exists(table_name)
 
         logger.info("table_ensured", table_name=table_name)
 
-    except ResourceExistsError:
-        # Table already exists - this is expected and fine
-        logger.debug("table_already_exists", table_name=table_name)
-
     except Exception as e:
-        # Any other error is critical - fail fast
+        # Any error is critical - fail fast
         logger.error(
             "table_creation_failed",
             table_name=table_name,
             error=str(e),
-            error_type=type(e).__name__
+            error_type=type(e).__name__,
         )
         raise RuntimeError(
             f"Failed to ensure table '{table_name}' exists: {str(e)}"
@@ -221,9 +256,7 @@ def ensure_all_tables_exist() -> None:
             ensure_table_exists(table_name)
         except Exception as e:
             logger.error(
-                "table_initialization_failed",
-                table_name=table_name,
-                error=str(e)
+                "table_initialization_failed", table_name=table_name, error=str(e)
             )
             failed_tables.append(table_name)
 
@@ -233,17 +266,15 @@ def ensure_all_tables_exist() -> None:
         )
 
     logger.info(
-        "all_tables_ensured",
-        tables=REQUIRED_TABLES,
-        count=len(REQUIRED_TABLES)
+        "all_tables_ensured", tables=REQUIRED_TABLES, count=len(REQUIRED_TABLES)
     )
 
 
 def query_entities_paginated(
     table_client: TableClient,
     query_filter: Optional[str] = None,
-    page_size: int = TABLE_STORAGE_BATCH_SIZE
-) -> Generator[dict, None, None]:
+    page_size: int = TABLE_STORAGE_BATCH_SIZE,
+) -> Generator[Dict[str, Any], None, None]:
     """
     Query entities with pagination to avoid loading all results into memory.
 
@@ -263,7 +294,9 @@ def query_entities_paginated(
         >>>     process_entity(entity)
     """
     if query_filter:
-        pages = table_client.query_entities(query_filter=query_filter, results_per_page=page_size).by_page()
+        pages = table_client.query_entities(
+            query_filter=query_filter, results_per_page=page_size
+        ).by_page()
     else:
         pages = table_client.list_entities(results_per_page=page_size).by_page()
 

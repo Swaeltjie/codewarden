@@ -5,6 +5,44 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.6] - 2025-12-10
+
+### Fixed - Utils Security and Reliability
+
+Comprehensive code review of all `src/utils/` files with fixes for configuration validation, logging security, and storage reliability.
+
+**config.py:**
+- CRITICAL: Fixed duplicate `__version__` definition (lines 9 and 26)
+- Added Pydantic validators for KEYVAULT_URL, LOG_LEVEL, AZURE_AI_ENDPOINT
+- Added secret name validation (alphanumeric + hyphen, 1-127 chars)
+- Added secret value validation (non-empty check)
+- Added proper type hints to `__exit__` method
+- Added atexit cleanup registration for singleton pattern
+- Added error logging in context manager cleanup
+
+**constants.py:**
+- Fixed TTL inconsistency: IDEMPOTENCY_TTL_HOURS increased from 48 to 72 (matches CACHE_TTL_DAYS)
+- Added RETRY_BACKOFF_MULTIPLIER constant
+- Added ASYNC_OPERATION_TIMEOUT_SECONDS, TABLE_STORAGE_OPERATION_TIMEOUT_SECONDS, ASYNC_POLL_DELAY_SECONDS
+- Updated model reference comments (removed GPT-5 references)
+- Updated cost estimation comments
+
+**logging.py:**
+- Added sensitive data sanitization processor (passwords, tokens, secrets redacted)
+- Added log value sanitization (null byte removal, truncation)
+- Added thread-safe idempotency check with threading.Lock
+- Added `clear_logging_context()` function to prevent context leakage
+- Fixed return type annotation on `get_logger()` to `BoundLoggerBase`
+- Added ddtrace error logging instead of silent pass
+
+**table_storage.py:**
+- Enhanced `sanitize_odata_value()` with null byte check and length validation
+- Added `_is_transient_error()` helper for comprehensive retry logic
+- Retry decorator now handles HttpResponseError 5xx and 429, ConnectionError, TimeoutError
+- Added table name validation in `ensure_table_exists()`
+- Uses RETRY_BACKOFF_MULTIPLIER constant instead of hardcoded value
+- Fixed type hints for `query_entities_paginated()` return type
+
 ## [2.7.5] - 2025-12-10
 
 ### Fixed - Prompts Security and Reliability

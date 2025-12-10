@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.7.1 - Added MAX_LEARNING_SECTION_LENGTH constant
+Version: 2.7.6 - Fixed TTL consistency, added timeout constants
 """
 
 # =============================================================================
@@ -44,11 +44,11 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 AZURE_DEVOPS_TIMEOUT = 30
 
 # Timeout for establishing connection to AI service
-# GPT-5 with large prompts (14K+ tokens) needs extended timeout
+# Large prompts (14K+ tokens) and advanced models need extended timeout
 AI_CLIENT_TIMEOUT = 180
 
 # Timeout for AI API request completion (includes response generation)
-# GPT-5 with large prompts (14K+ tokens) needs extended timeout
+# Large prompts (14K+ tokens) and advanced models need extended timeout
 AI_REQUEST_TIMEOUT = 180
 
 # =============================================================================
@@ -94,6 +94,9 @@ RETRY_MIN_WAIT_SECONDS = 2
 
 # Maximum wait time between retries (exponential backoff cap)
 RETRY_MAX_WAIT_SECONDS = 10
+
+# Exponential backoff multiplier for retry delays
+RETRY_BACKOFF_MULTIPLIER = 1
 
 # =============================================================================
 # TOKEN ESTIMATION
@@ -141,12 +144,13 @@ MAX_COMMENT_LENGTH = 65536
 
 # =============================================================================
 # COST ESTIMATION (USD per 1K tokens)
+# NOTE: Update these values based on your actual model pricing
 # =============================================================================
 
-# Approximate cost per 1K prompt tokens (GPT-4 Turbo pricing)
+# Approximate cost per 1K prompt tokens
 COST_PER_1K_PROMPT_TOKENS = 0.01
 
-# Approximate cost per 1K completion tokens (GPT-4 Turbo pricing)
+# Approximate cost per 1K completion tokens
 COST_PER_1K_COMPLETION_TOKENS = 0.03
 
 # =============================================================================
@@ -173,7 +177,8 @@ TABLE_STORAGE_BATCH_SIZE = 100
 # =============================================================================
 
 # Hours to keep idempotency records (prevents duplicate processing)
-IDEMPOTENCY_TTL_HOURS = 48
+# IMPORTANT: Must be >= CACHE_TTL_DAYS * 24 to prevent duplicates with cached responses
+IDEMPOTENCY_TTL_HOURS = 72  # 3 days - matches cache TTL
 
 # Table name for storing idempotency keys
 IDEMPOTENCY_TABLE_NAME = "idempotency"
@@ -215,6 +220,15 @@ DEFAULT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2
 
 # Maximum time to wait for acquiring circuit breaker lock
 CIRCUIT_BREAKER_LOCK_TIMEOUT_SECONDS = 30
+
+# Timeout for async operations that need quick failure (seconds)
+ASYNC_OPERATION_TIMEOUT_SECONDS = 5
+
+# Timeout for blocking table storage operations (seconds)
+TABLE_STORAGE_OPERATION_TIMEOUT_SECONDS = 30
+
+# Polling delay when waiting for async operations (seconds)
+ASYNC_POLL_DELAY_SECONDS = 0.250
 
 # =============================================================================
 # FEEDBACK TRACKING SETTINGS
@@ -355,7 +369,7 @@ HEALTH_SCORE_RECURRING_PENALTY = 30
 DEFAULT_TEMPERATURE = 0.2
 
 # Maximum tokens for AI completion responses
-# GPT-5 supports up to 128K output tokens - use maximum capacity
+# Modern models support 128K+ output tokens - use maximum capacity
 DEFAULT_MAX_TOKENS = 128000
 
 # =============================================================================
