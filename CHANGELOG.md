@@ -5,6 +5,39 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.4] - 2025-12-10
+
+### Fixed - Models Reliability and Security
+
+Comprehensive code review of all `src/models/` files with fixes for input validation, security, and data integrity.
+
+**pr_event.py:**
+- Added pre-compiled regex pattern for branch validation (performance)
+- Added null byte validation to title, repository_name, project_name, event_type
+- Enhanced email validation with domain check
+- Added null byte validation to diff_content
+- Fixed changed_sections type hint from `List` to `List[Any]`
+- Made path traversal check platform-independent
+- Moved `os` import to module level
+
+**review_result.py:**
+- Fixed overflow comparison: changed `>=` to `>` in token/cost aggregation
+- Added type validation for metadata dict before extraction
+- Added type coercion for tokens_used and estimated_cost with fallbacks
+- Added INFO severity to summary counts (was missing from aggregate)
+
+**feedback.py:**
+- Added Azure Table Storage key validation (PartitionKey, RowKey)
+- Added path traversal protection for file_path field
+- Validates invalid characters in Table Storage keys (/, \, #, ?)
+
+**reliability.py:**
+- Added real date validation (not just format) for PartitionKey
+- Added null byte validation for repository, project, event_type fields
+- Added input validation for hash generation in create_request_id
+- Added file_path security validation in CacheEntity
+- Added path traversal check in create_content_hash
+
 ## [2.7.3] - 2025-12-10
 
 ### Fixed - Handler Reliability and Security

@@ -4,8 +4,9 @@ Configuration Management
 
 Handles application settings and Azure Key Vault integration for secrets.
 
-Version: 2.7.3 - Reliability fixes for handlers
+Version: 2.7.4 - Models reliability hardening
 """
+__version__ = "2.7.4"
 from pydantic_settings import BaseSettings
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient

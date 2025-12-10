@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.6.37 - Fixed overflow check order in token/cost aggregation
+Version: 2.7.4 - Fixed overflow comparison, added metadata type validation, INFO in summary
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -341,10 +341,30 @@ class ReviewResult(BaseModel):
                 pr_id=pr_id,
             )
 
-        # Get metadata
+        # Get metadata with type validation
         metadata = ai_json.get("_metadata", {})
-        tokens_used = metadata.get("tokens_used", 0)
-        estimated_cost = metadata.get("estimated_cost", 0.0)
+        if not isinstance(metadata, dict):
+            _logger.warning(
+                "ai_response_metadata_not_dict",
+                type=type(metadata).__name__,
+                pr_id=pr_id,
+            )
+            metadata = {}
+
+        # Safely extract with type coercion
+        try:
+            tokens_used = int(metadata.get("tokens_used", 0))
+        except (ValueError, TypeError):
+            _logger.warning(
+                "invalid_tokens_used_value", value=metadata.get("tokens_used")
+            )
+            tokens_used = 0
+
+        try:
+            estimated_cost = float(metadata.get("estimated_cost", 0.0))
+        except (ValueError, TypeError):
+            _logger.warning("invalid_cost_value", value=metadata.get("estimated_cost"))
+            estimated_cost = 0.0
 
         # Get recommendation
         recommendation = ai_json.get("recommendation", "comment")
@@ -431,8 +451,8 @@ class ReviewResult(BaseModel):
 
                 all_issues.extend(result.issues)
 
-                # Check BEFORE adding to prevent temporary overflow
-                if total_tokens + tokens_used >= MAX_AGGREGATED_TOKENS:
+                # Check BEFORE adding to prevent overflow (use > not >=)
+                if total_tokens + tokens_used > MAX_AGGREGATED_TOKENS:
                     _logger.warning(
                         "aggregate_token_overflow",
                         current=total_tokens,
@@ -443,7 +463,7 @@ class ReviewResult(BaseModel):
                 else:
                     total_tokens += tokens_used
 
-                if total_cost + estimated_cost >= MAX_AGGREGATED_COST:
+                if total_cost + estimated_cost > MAX_AGGREGATED_COST:
                     _logger.warning(
                         "aggregate_cost_overflow",
                         current=total_cost,
@@ -474,7 +494,7 @@ class ReviewResult(BaseModel):
         else:
             recommendation = ReviewRecommendation.APPROVE
 
-        # Create summary
+        # Create summary with all severity levels
         issue_counts = {
             "critical": len(
                 [i for i in all_issues if i.severity == IssueSeverity.CRITICAL]
@@ -484,13 +504,15 @@ class ReviewResult(BaseModel):
                 [i for i in all_issues if i.severity == IssueSeverity.MEDIUM]
             ),
             "low": len([i for i in all_issues if i.severity == IssueSeverity.LOW]),
+            "info": len([i for i in all_issues if i.severity == IssueSeverity.INFO]),
         }
 
         summary = f"Found {len(all_issues)} total issues: "
         summary += f"{issue_counts['critical']} critical, "
         summary += f"{issue_counts['high']} high, "
         summary += f"{issue_counts['medium']} medium, "
-        summary += f"{issue_counts['low']} low"
+        summary += f"{issue_counts['low']} low, "
+        summary += f"{issue_counts['info']} info"
 
         return cls(
             pr_id=pr_id,

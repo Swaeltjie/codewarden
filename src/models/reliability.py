@@ -4,13 +4,14 @@ Reliability Models
 
 Data models for idempotency tracking and response caching.
 
-Version: 2.7.2 - Fixed HALF_OPEN failure handling to properly reopen circuit
+Version: 2.7.4 - Added input validation for hash generation, date validation
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 import hashlib
 import json
+import re
 
 from src.utils.constants import (
     DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
@@ -43,11 +44,24 @@ class IdempotencyEntity(BaseModel):
     @classmethod
     def validate_partition_key(cls, v: str) -> str:
         """Validate partition key is a valid date format."""
-        import re
-
         if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
             raise ValueError("PartitionKey must be in YYYY-MM-DD format")
+        # Validate it's a real date
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"PartitionKey must be a valid date: {v}")
         return v
+
+    @field_validator("repository", "project", "event_type")
+    @classmethod
+    def validate_string_fields(cls, v: str) -> str:
+        """Validate string fields for null bytes and empty values."""
+        if not v or not v.strip():
+            raise ValueError("Field cannot be empty or whitespace")
+        if "\x00" in v:
+            raise ValueError("Field contains null bytes")
+        return v.strip()
 
     @classmethod
     def create_request_id(
@@ -72,7 +86,15 @@ class IdempotencyEntity(BaseModel):
 
         Returns:
             Unique request ID string
+        Raises:
+            ValueError: If inputs contain null bytes or invalid characters
         """
+        # Validate inputs for null bytes
+        if "\x00" in repository:
+            raise ValueError("Repository name contains null bytes")
+        if source_commit_id and "\x00" in source_commit_id:
+            raise ValueError("Commit ID contains null bytes")
+
         # Create stable hash of request parameters
         # v2.6.12: Exclude event_type to deduplicate across created/updated webhooks
         parts = [str(pr_id), repository]
@@ -80,7 +102,7 @@ class IdempotencyEntity(BaseModel):
             parts.append(source_commit_id)
 
         content = "|".join(parts)
-        request_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
+        request_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
         return f"pr{pr_id}_{request_hash}"
 
@@ -155,6 +177,18 @@ class CacheEntity(BaseModel):
     hit_count: int = Field(default=1, ge=1, lt=1000000)
     expires_at: datetime  # 7 days from creation
 
+    @field_validator("file_path")
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        """Validate file path for security issues."""
+        if "\x00" in v:
+            raise ValueError("File path contains null bytes")
+        if ".." in v:
+            raise ValueError("File path contains path traversal sequence")
+        if not v or v.isspace():
+            raise ValueError("File path cannot be empty or whitespace")
+        return v
+
     @field_validator("review_result_json")
     @classmethod
     def validate_review_json(cls, v: str) -> str:
@@ -176,12 +210,21 @@ class CacheEntity(BaseModel):
 
         Returns:
             SHA256 hash string
+
+        Raises:
+            ValueError: If inputs contain null bytes or path traversal
         """
+        # Validate inputs
+        if "\x00" in diff_content or "\x00" in file_path:
+            raise ValueError("Hash input contains null bytes")
+        if ".." in file_path:
+            raise ValueError("File path contains path traversal sequence")
+
         # Normalize diff content (remove timestamps, whitespace variations)
         normalized = diff_content.strip()
         content = f"{file_path}:{normalized}"
 
-        return hashlib.sha256(content.encode()).hexdigest()
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     @classmethod
     def from_review_result(

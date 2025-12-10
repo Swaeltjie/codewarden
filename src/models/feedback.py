@@ -5,13 +5,14 @@ Data models for feedback tracking and learning.
 Represents developer feedback on AI suggestions for continuous improvement.
 Includes few-shot learning support for adaptive AI reviews.
 
-Version: 2.7.1 - Bug fix: acceptance_count upper bound validation
+Version: 2.7.4 - Added path traversal protection, Table Storage key validation
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 from enum import Enum
 import json
+import os
 
 from src.utils.constants import (
     MAX_EXAMPLE_CODE_SNIPPET_LENGTH,
@@ -79,6 +80,30 @@ class FeedbackEntity(BaseModel):
     review_id: Optional[str] = Field(
         None, max_length=200, description="Review ID for tracking"
     )
+
+    @field_validator("PartitionKey", "RowKey")
+    @classmethod
+    def validate_table_key(cls, v: str) -> str:
+        """Validate Azure Table Storage key constraints."""
+        if not v:
+            raise ValueError("Table Storage key cannot be empty")
+        v = v.replace("\x00", "")
+        invalid_chars = ["/", "\\", "#", "?", "\t", "\n", "\r"]
+        for char in invalid_chars:
+            if char in v:
+                raise ValueError(f"Table key contains invalid character: {repr(char)}")
+        return v.strip()
+
+    @field_validator("file_path")
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        """Validate file path for security."""
+        if not v:
+            return v
+        v = v.replace("\x00", "")
+        if ".." in v:
+            raise ValueError("Path traversal detected in file_path")
+        return v.strip()
 
     @field_validator("severity")
     @classmethod
