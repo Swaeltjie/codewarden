@@ -5,7 +5,7 @@ File Type Registry
 Comprehensive registry of file types with intelligent detection and best practices.
 Transforms CodeWarden from IaC-specific to universal code review.
 
-Version: 2.6.37 - Synced version with main codebase
+Version: 2.7.2 - Added extension length validation, atomic extension map building
 """
 from dataclasses import dataclass, field
 from enum import Enum
@@ -349,17 +349,27 @@ class FileTypeRegistry:
 
     @classmethod
     def _build_extension_map(cls) -> None:
-        """Build extension to config mapping with priorities."""
+        """
+        Build extension to config mapping with priorities.
+
+        Thread-safe with atomic assignment to prevent partial initialization.
+        """
+        # Build map in local variable for atomic assignment
+        extension_map_temp: Dict[str, List[Tuple[FileTypeConfig, int]]] = {}
+
         for config in cls._configs.values():
             for ext in config.extensions:
                 ext_lower = ext.lower()
-                if ext_lower not in cls._extension_map:
-                    cls._extension_map[ext_lower] = []
-                cls._extension_map[ext_lower].append((config, config.priority))
+                if ext_lower not in extension_map_temp:
+                    extension_map_temp[ext_lower] = []
+                extension_map_temp[ext_lower].append((config, config.priority))
 
         # Sort by priority (descending) for each extension
-        for ext in cls._extension_map:
-            cls._extension_map[ext].sort(key=lambda x: x[1], reverse=True)
+        for ext in extension_map_temp:
+            extension_map_temp[ext].sort(key=lambda x: x[1], reverse=True)
+
+        # Atomic assignment (thread-safe)
+        cls._extension_map = extension_map_temp
 
     # ==========================================================================
     # REGISTRATION METHODS
@@ -2665,6 +2675,9 @@ class FileTypeRegistry:
     # Maximum path length to prevent ReDoS attacks (v2.6.1)
     MAX_PATH_LENGTH: int = 2000
 
+    # Maximum extension length to prevent memory issues (v2.7.2)
+    MAX_EXTENSION_LENGTH: int = 50
+
     @classmethod
     @lru_cache(maxsize=1000)
     def classify(cls, file_path: str) -> FileCategory:
@@ -2730,13 +2743,26 @@ class FileTypeRegistry:
 
         # Second, try extension mapping
         # Get file extension (handle files like "Dockerfile", "Makefile")
+        ext = None
         if "." in file_path:
-            ext = "." + file_path.rsplit(".", 1)[-1].lower()
+            ext_candidate = "." + file_path.rsplit(".", 1)[-1].lower()
+            # Validate extension length (v2.7.2)
+            if len(ext_candidate) <= cls.MAX_EXTENSION_LENGTH:
+                ext = ext_candidate
+            else:
+                logger.warning(
+                    "extension_too_long",
+                    extension_length=len(ext_candidate),
+                    max_length=cls.MAX_EXTENSION_LENGTH,
+                    path=file_path[:100],
+                )
         else:
             # For files without extension, use the filename
-            ext = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
+            filename = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
+            if len(filename) <= cls.MAX_EXTENSION_LENGTH:
+                ext = filename
 
-        if ext in cls._extension_map:
+        if ext and ext in cls._extension_map:
             # Return the highest priority match
             config, _ = cls._extension_map[ext][0]
             logger.debug(
