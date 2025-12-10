@@ -5,6 +5,49 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.2] - 2025-12-10
+
+### Fixed - Reliability and Security Hardening
+
+Comprehensive code review of all `src/services/` files with fixes for reliability, security, and DoS protection.
+
+**diff_parser.py:**
+- Added path traversal protection via `_validate_file_path()` helper
+- Added DoS protection with MAX_DIFF_LINES (100,000) limit
+- Fixed line calculation in `format_section_for_review`
+- Added try/except error handling in fallback parser
+
+**feedback_tracker.py:**
+- Added pr_id type coercion with bounds checking (0 < pr_id < 2147483647)
+- Added thread_id type validation from API responses
+- Added JSON size validation (MAX_JSON_FIELD_SIZE) before parsing
+- Sanitized author field for control characters
+
+**file_type_registry.py:**
+- Added MAX_EXTENSION_LENGTH (50 chars) validation
+- Made `_build_extension_map()` thread-safe with atomic assignment
+
+**idempotency_checker.py:**
+- Added `_validate_string_param()` for injection/DoS prevention
+- Validated all string inputs (repository, project, event_type, source_commit_id)
+- Added result_summary truncation to 1000 chars
+
+**pattern_detector.py:**
+- Added MAX_PATTERN_REVIEWS (10,000) limit to prevent unbounded queries
+- Validated days parameter (1-365) and repository parameter
+- Added type validation before JSON.loads for issue_types and files
+- Validated JSON.loads result is actually a list before iteration
+
+**response_cache.py:**
+- Added JSON size validation before deserializing cached review results
+- Added type checking for review_json field
+- Added try-except for JSON parsing and ReviewResult construction
+- Added timeout (5s) on cache hit metadata update operations
+
+**New Constants (src/utils/constants.py):**
+- `MAX_DIFF_LINES = 100_000` - DoS protection for diff parsing
+- `MAX_JSON_FIELD_SIZE = 10_000` - JSON field size limit for parsing
+
 ## [2.7.1] - 2025-12-08
 
 ### Fixed - Bug Fixes for Few-Shot Learning
