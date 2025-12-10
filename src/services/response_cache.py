@@ -4,7 +4,7 @@ Response Cache
 
 Caches AI review responses to reduce costs for identical diffs.
 
-Version: 2.6.37 - Fixed path validation order for Azure DevOps paths
+Version: 2.7.2 - Added JSON size validation, ReviewResult exception handling, timeout on updates
 """
 import asyncio
 import json
@@ -25,6 +25,7 @@ from src.utils.constants import (
     CACHE_TTL_DAYS,
     CACHE_MAX_WRITES_PER_MINUTE,
     CACHE_TABLE_NAME,
+    MAX_JSON_FIELD_SIZE,
     RATE_LIMIT_WINDOW_SECONDS,
     TABLE_STORAGE_BATCH_SIZE,
 )
@@ -274,19 +275,68 @@ class ResponseCache:
                     cost_saved=entity.get("estimated_cost", 0),
                 )
 
-                # Update hit count and last accessed time (v2.6.3: non-blocking)
+                # Update hit count and last accessed time (with timeout to prevent blocking)
                 entity["hit_count"] = entity.get("hit_count", 1) + 1
                 entity["last_accessed_at"] = now
-                await asyncio.to_thread(
-                    table_client.update_entity, entity, mode="merge"
-                )
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            table_client.update_entity, entity, mode="merge"
+                        ),
+                        timeout=5.0,  # 5 second timeout for metadata updates
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "cache_hit_update_timeout",
+                        repository=repository,
+                        file_path=file_path,
+                    )
+                    # Continue to return cached result even if metadata update fails
 
-                # Deserialize review result
+                # Deserialize review result with size validation (DoS protection)
                 review_json = entity.get("review_result_json", "{}")
-                review_data = json.loads(review_json)
+                if not isinstance(review_json, str):
+                    logger.warning(
+                        "cache_review_json_invalid_type",
+                        repository=repository,
+                        file_path=file_path,
+                        json_type=type(review_json).__name__,
+                    )
+                    return None
+                if (
+                    len(review_json) > MAX_JSON_FIELD_SIZE * 100
+                ):  # Allow larger for full review results
+                    logger.warning(
+                        "cache_review_json_too_large",
+                        repository=repository,
+                        file_path=file_path,
+                        size=len(review_json),
+                    )
+                    return None
 
-                # Reconstruct ReviewResult
-                review_result = ReviewResult(**review_data)
+                try:
+                    review_data = json.loads(review_json)
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        "cache_review_json_parse_error",
+                        repository=repository,
+                        file_path=file_path,
+                        error=str(e),
+                    )
+                    return None
+
+                # Reconstruct ReviewResult with exception handling
+                try:
+                    review_result = ReviewResult(**review_data)
+                except Exception as e:
+                    logger.warning(
+                        "cache_review_result_construction_failed",
+                        repository=repository,
+                        file_path=file_path,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                    return None
 
                 return review_result
 
