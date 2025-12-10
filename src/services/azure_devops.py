@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.6.36 - Simplified session reinitialization logic
+Version: 2.7.2 - Fixed error handling in get_pull_request_files and _get_file_content
 """
 import aiohttp
 import asyncio
@@ -25,7 +25,7 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type
+    retry_if_exception_type,
 )
 from azure.identity.aio import DefaultAzureCredential
 
@@ -48,11 +48,13 @@ logger = get_logger(__name__)
 
 class DevOpsAuthError(Exception):
     """Authentication failed with Azure DevOps."""
+
     pass
 
 
 class DevOpsRateLimitError(Exception):
     """Rate limit exceeded."""
+
     def __init__(self, message: str, retry_after: int = DEFAULT_RETRY_AFTER_SECONDS):
         super().__init__(message)
         self.retry_after = retry_after
@@ -108,16 +110,14 @@ class AzureDevOpsClient:
             logger.info(
                 "devops_auth_success",
                 method="managed_identity",
-                expires_on=token.expires_on
+                expires_on=token.expires_on,
             )
 
             return f"Bearer {token.token}"
 
         except Exception as e:
             logger.error(
-                "devops_auth_failed",
-                error=str(e),
-                error_type=type(e).__name__
+                "devops_auth_failed", error=str(e), error_type=type(e).__name__
             )
             raise DevOpsAuthError(
                 "Failed to authenticate to Azure DevOps using Managed Identity. "
@@ -144,10 +144,7 @@ class AzureDevOpsClient:
                     return self._session
                 except Exception as e:
                     # v2.6.2: Token refresh failed - close session and reinitialize
-                    logger.warning(
-                        "token_refresh_failed_reinitializing",
-                        error=str(e)
-                    )
+                    logger.warning("token_refresh_failed_reinitializing", error=str(e))
                     try:
                         await self._session.close()
                     except Exception:
@@ -169,7 +166,7 @@ class AzureDevOpsClient:
                     limit=HTTP_CONNECTION_POOL_SIZE,
                     limit_per_host=HTTP_CONNECTION_LIMIT_PER_HOST,
                     ttl_dns_cache=DNS_CACHE_TTL_SECONDS,
-                    enable_cleanup_closed=True
+                    enable_cleanup_closed=True,
                 )
 
                 self._session = aiohttp.ClientSession(
@@ -177,15 +174,12 @@ class AzureDevOpsClient:
                     headers={
                         "Authorization": auth_header,
                         "Content-Type": "application/json",
-                        "Accept": "application/json"
+                        "Accept": "application/json",
                     },
-                    timeout=aiohttp.ClientTimeout(total=AZURE_DEVOPS_TIMEOUT)
+                    timeout=aiohttp.ClientTimeout(total=AZURE_DEVOPS_TIMEOUT),
                 )
 
-                logger.info(
-                    "devops_session_created",
-                    auth_method="managed_identity"
-                )
+                logger.info("devops_session_created", auth_method="managed_identity")
 
             return self._session
 
@@ -200,13 +194,10 @@ class AzureDevOpsClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type(aiohttp.ClientError),
-        reraise=True
+        reraise=True,
     )
     async def get_pull_request_details(
-        self,
-        project_id: str,
-        repository_id: str,
-        pr_id: int
+        self, project_id: str, repository_id: str, pr_id: int
     ) -> Dict:
         """
         Get detailed information about a pull request.
@@ -226,7 +217,7 @@ class AzureDevOpsClient:
             DevOpsRateLimitError: If rate limited
         """
         # v2.6.32: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
-        encoded_project = quote(project_id, safe='')
+        encoded_project = quote(project_id, safe="")
 
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
@@ -238,14 +229,14 @@ class AzureDevOpsClient:
             "devops_get_pr_details",
             project_id=project_id,
             repository_id=repository_id,
-            pr_id=pr_id
+            pr_id=pr_id,
         )
 
         # Get circuit breaker for Azure DevOps
         breaker = await CircuitBreakerManager.get_breaker(
             service_name="azure_devops",
             failure_threshold=DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
-            timeout_seconds=DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS
+            timeout_seconds=DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
         )
 
         # Define API call function
@@ -253,21 +244,22 @@ class AzureDevOpsClient:
             session = await self._get_session()
             async with session.get(url) as response:
                 if response.status == 401:
-                    raise DevOpsAuthError("Authentication failed - check Managed Identity permissions")
+                    raise DevOpsAuthError(
+                        "Authentication failed - check Managed Identity permissions"
+                    )
                 elif response.status == 429:
-                    retry_after = int(response.headers.get('Retry-After', DEFAULT_RETRY_AFTER_SECONDS))
+                    retry_after = int(
+                        response.headers.get("Retry-After", DEFAULT_RETRY_AFTER_SECONDS)
+                    )
                     raise DevOpsRateLimitError(
-                        "Rate limit exceeded",
-                        retry_after=retry_after
+                        "Rate limit exceeded", retry_after=retry_after
                     )
 
                 response.raise_for_status()
                 data = await response.json()
 
                 logger.info(
-                    "devops_pr_details_fetched",
-                    pr_id=pr_id,
-                    title=data.get('title')
+                    "devops_pr_details_fetched", pr_id=pr_id, title=data.get("title")
                 )
 
                 return data
@@ -277,28 +269,21 @@ class AzureDevOpsClient:
             return await breaker.call(make_api_call)
 
         except CircuitBreakerError as e:
-            logger.error(
-                "azure_devops_circuit_breaker_open",
-                error=str(e),
-                pr_id=pr_id
-            )
+            logger.error("azure_devops_circuit_breaker_open", error=str(e), pr_id=pr_id)
             raise Exception(f"Azure DevOps temporarily unavailable: {str(e)}")
-                
+
         except aiohttp.ClientError as e:
             logger.error("devops_api_error", error=str(e), url=url)
             raise
-    
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type(aiohttp.ClientError),
-        reraise=True
+        reraise=True,
     )
     async def get_pull_request_files(
-        self,
-        project_id: str,
-        repository_id: str,
-        pr_id: int
+        self, project_id: str, repository_id: str, pr_id: int
     ) -> List[Dict]:
         """
         Get list of changed files in a pull request.
@@ -314,7 +299,7 @@ class AzureDevOpsClient:
             List of file changes with metadata
         """
         # v2.6.32: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
-        encoded_project = quote(project_id, safe='')
+        encoded_project = quote(project_id, safe="")
 
         # Get iterations to find commits
         url = (
@@ -325,15 +310,29 @@ class AzureDevOpsClient:
 
         session = await self._get_session()
         async with session.get(url) as response:
+            if response.status == 401:
+                raise DevOpsAuthError(
+                    "Authentication failed - check Managed Identity permissions"
+                )
+            elif response.status == 429:
+                retry_after = int(
+                    response.headers.get("Retry-After", DEFAULT_RETRY_AFTER_SECONDS)
+                )
+                raise DevOpsRateLimitError(
+                    "Rate limit exceeded", retry_after=retry_after
+                )
             response.raise_for_status()
             iterations = await response.json()
 
-        if not iterations.get('value'):
+        # Handle empty or missing iterations list
+        iterations_list = iterations.get("value", [])
+        if not iterations_list:
+            logger.warning("no_pr_iterations_found", pr_id=pr_id)
             return []
 
         # Get the latest iteration
-        latest_iteration = iterations['value'][-1]
-        iteration_id = latest_iteration['id']
+        latest_iteration = iterations_list[-1]
+        iteration_id = latest_iteration["id"]
 
         # Get changes in this iteration
         url = (
@@ -341,14 +340,25 @@ class AzureDevOpsClient:
             f"{repository_id}/pullRequests/{pr_id}/iterations/{iteration_id}/changes"
             f"?api-version={self.api_version}"
         )
-        
-        session = await self._get_session()
+
+        # Reuse the same session
         async with session.get(url) as response:
+            if response.status == 401:
+                raise DevOpsAuthError(
+                    "Authentication failed - check Managed Identity permissions"
+                )
+            elif response.status == 429:
+                retry_after = int(
+                    response.headers.get("Retry-After", DEFAULT_RETRY_AFTER_SECONDS)
+                )
+                raise DevOpsRateLimitError(
+                    "Rate limit exceeded", retry_after=retry_after
+                )
             response.raise_for_status()
             data = await response.json()
 
-        return data.get('changeEntries', [])
-    
+        return data.get("changeEntries", [])
+
     def _convert_to_version_spec(self, ref_or_commit: str) -> str:
         """
         Convert a git ref or commit to Azure DevOps version spec format.
@@ -370,21 +380,23 @@ class AzureDevOpsClient:
             Version spec string for Azure DevOps API (path parameters only)
         """
         # Handle branch refs - strip refs/heads/ prefix and add GB
-        if ref_or_commit.startswith('refs/heads/'):
-            branch_name = ref_or_commit[len('refs/heads/'):]
+        if ref_or_commit.startswith("refs/heads/"):
+            branch_name = ref_or_commit[len("refs/heads/") :]
             return f"GB{branch_name}"
 
         # Handle tag refs - strip refs/tags/ prefix and add GT
-        if ref_or_commit.startswith('refs/tags/'):
-            tag_name = ref_or_commit[len('refs/tags/'):]
+        if ref_or_commit.startswith("refs/tags/"):
+            tag_name = ref_or_commit[len("refs/tags/") :]
             return f"GT{tag_name}"
 
         # Check if it's a commit SHA (40 hex chars)
-        if len(ref_or_commit) == 40 and all(c in '0123456789abcdefABCDEF' for c in ref_or_commit):
+        if len(ref_or_commit) == 40 and all(
+            c in "0123456789abcdefABCDEF" for c in ref_or_commit
+        ):
             return f"GC{ref_or_commit}"
 
         # If already a version spec (starts with G), return as-is
-        if ref_or_commit.startswith('G') and len(ref_or_commit) > 2:
+        if ref_or_commit.startswith("G") and len(ref_or_commit) > 2:
             return ref_or_commit
 
         # Assume it's a branch name without refs/heads/ prefix
@@ -394,7 +406,7 @@ class AzureDevOpsClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type(aiohttp.ClientError),
-        reraise=True
+        reraise=True,
     )
     async def get_file_diff(
         self,
@@ -402,7 +414,7 @@ class AzureDevOpsClient:
         repository_id: str,
         file_path: str,
         source_commit: str,
-        target_commit: str
+        target_commit: str,
     ) -> str:
         """
         Get unified diff for a specific file between two commits.
@@ -426,8 +438,8 @@ class AzureDevOpsClient:
 
         # Strip refs/heads/ prefix from branch refs to get plain branch names
         def strip_refs_prefix(ref: str) -> str:
-            if ref.startswith('refs/heads/'):
-                return ref[len('refs/heads/'):]
+            if ref.startswith("refs/heads/"):
+                return ref[len("refs/heads/") :]
             return ref
 
         base_version = strip_refs_prefix(target_commit)
@@ -436,17 +448,19 @@ class AzureDevOpsClient:
         # v2.6.35: Determine version type (branch or commit) for API clarity
         # Commit SHAs are 40 hex characters; otherwise assume branch name
         def get_version_type(version: str) -> str:
-            is_sha = len(version) == 40 and all(c in '0123456789abcdefABCDEF' for c in version)
+            is_sha = len(version) == 40 and all(
+                c in "0123456789abcdefABCDEF" for c in version
+            )
             return "commit" if is_sha else "branch"
 
         base_version_type = get_version_type(base_version)
         target_version_type = get_version_type(target_version)
 
         # URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
-        encoded_project = quote(project_id, safe='')
+        encoded_project = quote(project_id, safe="")
         # URL-encode branch names for special characters (spaces, #, ?, &)
-        encoded_base = quote(base_version, safe='')
-        encoded_target = quote(target_version, safe='')
+        encoded_base = quote(base_version, safe="")
+        encoded_target = quote(target_version, safe="")
 
         # v2.6.35: Fixed API call - removed non-existent diffContentType parameter,
         # added baseVersionType and targetVersionType for proper version interpretation
@@ -462,7 +476,7 @@ class AzureDevOpsClient:
             file_path=file_path,
             base_version=base_version,
             target_version=target_version,
-            url=url
+            url=url,
         )
 
         try:
@@ -472,22 +486,22 @@ class AzureDevOpsClient:
                 data = await response.json()
 
             # Find the specific file in the changes
-            for change in data.get('changes', []):
-                item_path = change.get('item', {}).get('path', '')
+            for change in data.get("changes", []):
+                item_path = change.get("item", {}).get("path", "")
 
                 if item_path == file_path or item_path.endswith(file_path):
                     # v2.6.21: Check if API returned actual diff content (blocks)
                     # If not, fetch file content directly and generate diff
-                    if 'blocks' not in change:
-                        change_type = change.get('changeType', 'edit')
+                    if "blocks" not in change:
+                        change_type = change.get("changeType", "edit")
                         logger.info(
                             "diff_blocks_missing_fetching_content",
                             file_path=file_path,
-                            change_type=change_type
+                            change_type=change_type,
                         )
 
                         # Fetch actual file content based on change type
-                        if change_type in ['add', 'add, edit']:
+                        if change_type in ["add", "add, edit"]:
                             # New file - fetch from source branch (feature branch)
                             content = await self._get_file_content(
                                 project_id, repository_id, file_path, target_version
@@ -495,7 +509,7 @@ class AzureDevOpsClient:
                             if content:
                                 return self._generate_add_diff(file_path, content)
 
-                        elif change_type == 'delete':
+                        elif change_type == "delete":
                             # Deleted file - fetch from target branch (main)
                             content = await self._get_file_content(
                                 project_id, repository_id, file_path, base_version
@@ -512,28 +526,33 @@ class AzureDevOpsClient:
                                 project_id, repository_id, file_path, target_version
                             )
                             if old_content is not None and new_content is not None:
-                                return self._generate_edit_diff(file_path, old_content, new_content)
+                                return self._generate_edit_diff(
+                                    file_path, old_content, new_content
+                                )
+                            else:
+                                # Content unavailable - log and return empty diff
+                                logger.warning(
+                                    "file_content_unavailable_for_diff",
+                                    file_path=file_path,
+                                    old_available=old_content is not None,
+                                    new_available=new_content is not None,
+                                )
+                                return ""
 
                     # API returned blocks - use standard formatter
-                    return self._format_as_unified_diff(change, file_path, repository_id, source_commit, target_commit)
+                    return self._format_as_unified_diff(
+                        change, file_path, repository_id, source_commit, target_commit
+                    )
 
             logger.warning("file_not_found_in_diff", file_path=file_path)
             return ""
 
         except Exception as e:
-            logger.error(
-                "diff_fetch_failed",
-                file_path=file_path,
-                error=str(e)
-            )
+            logger.error("diff_fetch_failed", file_path=file_path, error=str(e))
             return ""
 
     async def _get_file_content(
-        self,
-        project_id: str,
-        repository_id: str,
-        file_path: str,
-        version_ref: str
+        self, project_id: str, repository_id: str, file_path: str, version_ref: str
     ) -> Optional[str]:
         """
         Get file content at a specific version (branch or commit).
@@ -550,17 +569,19 @@ class AzureDevOpsClient:
         # v2.6.22: Use versionDescriptor.versionType=branch for branch names, commit for SHAs
         # Branch names: main, feature/xyz (no refs/heads/ prefix)
         # Commit SHAs: 40-char hex strings
-        is_commit_sha = len(version_ref) == 40 and all(c in '0123456789abcdef' for c in version_ref.lower())
+        is_commit_sha = len(version_ref) == 40 and all(
+            c in "0123456789abcdef" for c in version_ref.lower()
+        )
         version_type = "commit" if is_commit_sha else "branch"
 
         # v2.6.24: CRITICAL - Must include download=true OR use Accept header
         # Without this, Azure DevOps returns JSON metadata instead of file content
         # v2.6.29: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
         # v2.6.35: Use official versionDescriptor.* parameter names per API docs
-        encoded_project = quote(project_id, safe='')
+        encoded_project = quote(project_id, safe="")
         # URL-encode file path (preserve / as path separator) and version ref
-        encoded_path = quote(file_path, safe='/')
-        encoded_version = quote(version_ref, safe='')
+        encoded_path = quote(file_path, safe="/")
+        encoded_version = quote(version_ref, safe="")
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/{repository_id}/items"
             f"?path={encoded_path}&versionDescriptor.versionType={version_type}"
@@ -578,12 +599,26 @@ class AzureDevOpsClient:
                 response.raise_for_status()
                 # Response is the raw file content
                 return await response.text()
-        except Exception as e:
-            logger.warning(
-                "file_content_fetch_failed",
+        except aiohttp.ClientResponseError as e:
+            # Only treat 404 as "file not found", propagate other HTTP errors
+            if e.status == 404:
+                return None
+            logger.error(
+                "file_content_fetch_error",
                 file_path=file_path,
-                version_ref=version_ref[:20],
-                error=str(e)
+                status=e.status,
+                error=str(e),
+            )
+            # Return None for graceful degradation in diff generation
+            # but log at error level for visibility
+            return None
+        except aiohttp.ClientError as e:
+            # Network-level errors (connection failed, timeout, etc.)
+            logger.warning(
+                "file_content_network_error",
+                file_path=file_path,
+                version_ref=version_ref[:7] if len(version_ref) >= 7 else version_ref,
+                error=str(e),
             )
             return None
 
@@ -602,16 +637,16 @@ class AzureDevOpsClient:
         """
         # v2.6.25: Normalize line endings to LF for consistent diff parsing
         # Windows files may have CRLF which can cause hunk count mismatches
-        normalized_content = content.replace('\r\n', '\n').replace('\r', '\n')
+        normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
 
         # Handle trailing newline - don't count it as an empty line
         # but track if file ends with newline for proper diff format
-        has_trailing_newline = normalized_content.endswith('\n')
+        has_trailing_newline = normalized_content.endswith("\n")
         if has_trailing_newline:
             normalized_content = normalized_content[:-1]
 
         # Split into lines
-        lines = normalized_content.split('\n') if normalized_content else []
+        lines = normalized_content.split("\n") if normalized_content else []
         line_count = len(lines)
 
         # Handle empty file case
@@ -628,7 +663,7 @@ class AzureDevOpsClient:
             "new file mode 100644",
             "--- /dev/null",
             f"+++ b{file_path}",
-            f"@@ -0,0 +1,{line_count} @@"
+            f"@@ -0,0 +1,{line_count} @@",
         ]
 
         # Add all lines as additions
@@ -656,15 +691,15 @@ class AzureDevOpsClient:
             Unified diff string compatible with unidiff parser
         """
         # v2.6.25: Normalize line endings to LF for consistent diff parsing
-        normalized_content = content.replace('\r\n', '\n').replace('\r', '\n')
+        normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
 
         # Handle trailing newline
-        has_trailing_newline = normalized_content.endswith('\n')
+        has_trailing_newline = normalized_content.endswith("\n")
         if has_trailing_newline:
             normalized_content = normalized_content[:-1]
 
         # Split into lines
-        lines = normalized_content.split('\n') if normalized_content else []
+        lines = normalized_content.split("\n") if normalized_content else []
         line_count = len(lines)
 
         # Handle empty file case
@@ -681,7 +716,7 @@ class AzureDevOpsClient:
             "deleted file mode 100644",
             f"--- a{file_path}",
             "+++ /dev/null",
-            f"@@ -1,{line_count} +0,0 @@"
+            f"@@ -1,{line_count} +0,0 @@",
         ]
 
         # Add all lines as deletions
@@ -694,7 +729,9 @@ class AzureDevOpsClient:
 
         return "\n".join(diff_lines) + "\n"
 
-    def _generate_edit_diff(self, file_path: str, old_content: str, new_content: str) -> str:
+    def _generate_edit_diff(
+        self, file_path: str, old_content: str, new_content: str
+    ) -> str:
         """
         Generate unified diff for a modified file using difflib.
 
@@ -717,7 +754,7 @@ class AzureDevOpsClient:
             new_lines,
             fromfile=f"a{file_path}",
             tofile=f"b{file_path}",
-            lineterm=""
+            lineterm="",
         )
 
         # Convert to list and join
@@ -738,7 +775,7 @@ class AzureDevOpsClient:
         file_path: str,
         repository_id: str,
         source_commit: str,
-        target_commit: str
+        target_commit: str,
     ) -> str:
         """
         Convert Azure DevOps change format to unified diff format.
@@ -772,7 +809,7 @@ class AzureDevOpsClient:
         Returns:
             Unified diff string compatible with standard diff parsers
         """
-        change_type = change.get('changeType', 'edit')
+        change_type = change.get("changeType", "edit")
 
         # Step 1: Build unified diff header (git format)
         diff_lines = [
@@ -781,12 +818,12 @@ class AzureDevOpsClient:
 
         # Step 2: Add file mode headers based on change type
         # New files need special markers for diff parsers
-        if change_type in ['add', 'add, edit']:
+        if change_type in ["add", "add, edit"]:
             # File was added - no previous version exists
             diff_lines.append("new file mode 100644")
             diff_lines.append("--- /dev/null")  # No original file
             diff_lines.append(f"+++ b{file_path}")  # New file in target
-        elif change_type in ['delete']:
+        elif change_type in ["delete"]:
             # File was deleted - no new version exists
             diff_lines.append("deleted file mode 100644")
             diff_lines.append(f"--- a{file_path}")  # Original file
@@ -798,24 +835,28 @@ class AzureDevOpsClient:
 
         # Step 3: Extract change count dictionary (fallback data)
         # This contains aggregate counts when detailed blocks aren't available
-        change_counts = change.get('changeCountDictionary', {})
+        change_counts = change.get("changeCountDictionary", {})
 
         # Step 4: Process diff content - two paths:
         # Path A: Detailed 'blocks' available (preferred)
         # Path B: Only summary counts available (fallback)
 
-        if 'blocks' in change:
+        if "blocks" in change:
             # ===== PATH A: Process detailed line-by-line changes =====
             # Each block represents a "hunk" in unified diff terminology
 
-            for block in change['blocks']:
+            for block in change["blocks"]:
                 # Extract line position information
                 # Azure DevOps uses 'm' prefix for Modified (new) file
                 # and 'o' prefix for Original (old) file
-                modified_lines_start = block.get('mLine', 1)  # New file start line
-                modified_lines_count = block.get('mLinesCount', 0)  # New file line count
-                original_lines_start = block.get('oLine', 1)  # Old file start line
-                original_lines_count = block.get('oLinesCount', 0)  # Old file line count
+                modified_lines_start = block.get("mLine", 1)  # New file start line
+                modified_lines_count = block.get(
+                    "mLinesCount", 0
+                )  # New file line count
+                original_lines_start = block.get("oLine", 1)  # Old file start line
+                original_lines_count = block.get(
+                    "oLinesCount", 0
+                )  # Old file line count
 
                 # Create hunk header in unified diff format
                 # Format: @@ -old_start,old_count +new_start,new_count @@
@@ -830,7 +871,7 @@ class AzureDevOpsClient:
 
                 # Process the actual line changes
                 # changeType in block indicates what happened to these lines
-                change_type_block = block.get('changeType', 0)
+                change_type_block = block.get("changeType", 0)
 
                 # Azure DevOps changeType values:
                 # 0 = Unchanged (context lines)
@@ -841,33 +882,33 @@ class AzureDevOpsClient:
                 if change_type_block == 1:
                     # Lines were added (only exist in new file)
                     # Prefix with '+' in unified diff
-                    if 'mLines' in block:
-                        for line in block['mLines']:
+                    if "mLines" in block:
+                        for line in block["mLines"]:
                             diff_lines.append(f"+{line.get('content', '')}")
 
                 elif change_type_block == 2:
                     # Lines were deleted (only exist in old file)
                     # Prefix with '-' in unified diff
-                    if 'oLines' in block:
-                        for line in block['oLines']:
+                    if "oLines" in block:
+                        for line in block["oLines"]:
                             diff_lines.append(f"-{line.get('content', '')}")
 
                 elif change_type_block == 3:
                     # Lines were modified (exist in both, but different)
                     # Show old lines with '-', then new lines with '+'
-                    if 'oLines' in block:
-                        for line in block['oLines']:
+                    if "oLines" in block:
+                        for line in block["oLines"]:
                             diff_lines.append(f"-{line.get('content', '')}")
-                    if 'mLines' in block:
-                        for line in block['mLines']:
+                    if "mLines" in block:
+                        for line in block["mLines"]:
                             diff_lines.append(f"+{line.get('content', '')}")
 
                 else:
                     # Unchanged context lines (changeType == 0 or unknown)
                     # Prefix with ' ' (space) in unified diff
                     # These provide context around changes
-                    if 'mLines' in block:
-                        for line in block['mLines']:
+                    if "mLines" in block:
+                        for line in block["mLines"]:
                             diff_lines.append(f" {line.get('content', '')}")
 
         else:
@@ -875,25 +916,27 @@ class AzureDevOpsClient:
             # Create a simplified diff showing only change counts
             # This happens when Azure DevOps API doesn't return full diff content
 
-            if change_type in ['add', 'add, edit']:
+            if change_type in ["add", "add, edit"]:
                 # File was added - show single hunk with add count
-                add_count = change_counts.get('Add', 1)
+                add_count = change_counts.get("Add", 1)
                 diff_lines.append(f"@@ -0,0 +1,{add_count} @@")
                 # Placeholder since we don't have actual content
                 diff_lines.append("+[New file - content not available in API response]")
 
-            elif change_type == 'delete':
+            elif change_type == "delete":
                 # File was deleted - show single hunk with delete count
-                delete_count = change_counts.get('Delete', 1)
+                delete_count = change_counts.get("Delete", 1)
                 diff_lines.append(f"@@ -1,{delete_count} +0,0 @@")
                 # Placeholder since we don't have actual content
-                diff_lines.append("-[Deleted file - content not available in API response]")
+                diff_lines.append(
+                    "-[Deleted file - content not available in API response]"
+                )
 
             else:
                 # File was edited - show combined change counts
-                add_count = change_counts.get('Add', 0)  # Lines added
-                edit_count = change_counts.get('Edit', 0)  # Lines modified
-                delete_count = change_counts.get('Delete', 0)  # Lines removed
+                add_count = change_counts.get("Add", 0)  # Lines added
+                edit_count = change_counts.get("Edit", 0)  # Lines modified
+                delete_count = change_counts.get("Delete", 0)  # Lines removed
                 total_changes = add_count + edit_count + delete_count
 
                 if total_changes > 0:
@@ -904,19 +947,23 @@ class AzureDevOpsClient:
                     diff_lines.append(f"@@ -1,{old_count} +1,{new_count} @@")
 
                     # Show summary placeholders since we don't have actual lines
-                    diff_lines.append(f"-[{delete_count + edit_count} lines changed/removed]")
-                    diff_lines.append(f"+[{add_count + edit_count} lines changed/added]")
+                    diff_lines.append(
+                        f"-[{delete_count + edit_count} lines changed/removed]"
+                    )
+                    diff_lines.append(
+                        f"+[{add_count + edit_count} lines changed/added]"
+                    )
 
         # Step 5: Join all lines with newlines to create final unified diff
         return "\n".join(diff_lines)
-    
+
     async def post_pr_comment(
         self,
         project_id: str,
         repository_id: str,
         pr_id: int,
         comment: str,
-        thread_type: str = "summary"
+        thread_type: str = "summary",
     ) -> Dict:
         """
         Post a summary comment thread to PR.
@@ -940,13 +987,16 @@ class AzureDevOpsClient:
                 "comment_too_long",
                 pr_id=pr_id,
                 length=len(comment),
-                max_length=MAX_COMMENT_LENGTH
+                max_length=MAX_COMMENT_LENGTH,
             )
             # Truncate comment with warning
-            comment = comment[:MAX_COMMENT_LENGTH - 100] + "\n\n... (Comment truncated due to length limit)"
+            comment = (
+                comment[: MAX_COMMENT_LENGTH - 100]
+                + "\n\n... (Comment truncated due to length limit)"
+            )
 
         # v2.6.32: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
-        encoded_project = quote(project_id, safe='')
+        encoded_project = quote(project_id, safe="")
 
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
@@ -959,23 +1009,23 @@ class AzureDevOpsClient:
                 {
                     "parentCommentId": 0,
                     "content": comment,
-                    "commentType": 1  # 1 = text, 2 = code change
+                    "commentType": 1,  # 1 = text, 2 = code change
                 }
             ],
             "status": 1,  # 1 = active, 2 = fixed, 3 = won't fix, 4 = closed
             "properties": {
                 "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {
                     "$type": "System.Int32",
-                    "$value": 1
+                    "$value": 1,
                 }
-            }
+            },
         }
-        
+
         logger.info(
             "devops_posting_comment",
             pr_id=pr_id,
             thread_type=thread_type,
-            comment_length=len(comment)
+            comment_length=len(comment),
         )
 
         try:
@@ -983,23 +1033,17 @@ class AzureDevOpsClient:
             async with session.post(url, json=payload) as response:
                 response.raise_for_status()
                 result = await response.json()
-                
+
                 logger.info(
-                    "devops_comment_posted",
-                    pr_id=pr_id,
-                    thread_id=result.get('id')
+                    "devops_comment_posted", pr_id=pr_id, thread_id=result.get("id")
                 )
-                
+
                 return result
-                
+
         except Exception as e:
-            logger.error(
-                "comment_post_failed",
-                pr_id=pr_id,
-                error=str(e)
-            )
+            logger.error("comment_post_failed", pr_id=pr_id, error=str(e))
             raise
-    
+
     async def post_inline_comment(
         self,
         project_id: str,
@@ -1007,11 +1051,11 @@ class AzureDevOpsClient:
         pr_id: int,
         file_path: str,
         line_number: int,
-        comment: str
+        comment: str,
     ) -> Dict:
         """
         Post an inline comment on a specific line in a file.
-        
+
         Args:
             project_id: Project UUID or name
             repository_id: Repository UUID
@@ -1019,12 +1063,12 @@ class AzureDevOpsClient:
             file_path: Path to file (e.g., /main.tf)
             line_number: Line number (1-indexed)
             comment: Comment text (markdown supported)
-            
+
         Returns:
             Created thread object
         """
         # v2.6.32: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
-        encoded_project = quote(project_id, safe='')
+        encoded_project = quote(project_id, safe="")
 
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
@@ -1033,40 +1077,28 @@ class AzureDevOpsClient:
         )
 
         payload = {
-            "comments": [
-                {
-                    "parentCommentId": 0,
-                    "content": comment,
-                    "commentType": 1
-                }
-            ],
+            "comments": [{"parentCommentId": 0, "content": comment, "commentType": 1}],
             "status": 1,
             "threadContext": {
                 "filePath": file_path,
-                "rightFileStart": {
-                    "line": line_number,
-                    "offset": 1
-                },
-                "rightFileEnd": {
-                    "line": line_number,
-                    "offset": 999  # End of line
-                }
+                "rightFileStart": {"line": line_number, "offset": 1},
+                "rightFileEnd": {"line": line_number, "offset": 999},  # End of line
             },
             "properties": {
                 "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {
                     "$type": "System.Int32",
-                    "$value": 1
+                    "$value": 1,
                 }
-            }
+            },
         }
-        
+
         logger.info(
             "devops_posting_inline_comment",
             pr_id=pr_id,
             file_path=file_path,
-            line_number=line_number
+            line_number=line_number,
         )
-        
+
         try:
             session = await self._get_session()
             async with session.post(url, json=payload) as response:
@@ -1076,26 +1108,23 @@ class AzureDevOpsClient:
                 logger.info(
                     "devops_inline_comment_posted",
                     pr_id=pr_id,
-                    thread_id=result.get('id')
+                    thread_id=result.get("id"),
                 )
-                
+
                 return result
-                
+
         except Exception as e:
             logger.error(
                 "inline_comment_post_failed",
                 pr_id=pr_id,
                 file_path=file_path,
                 line_number=line_number,
-                error=str(e)
+                error=str(e),
             )
             raise
 
     async def _get_pr_threads(
-        self,
-        project_id: str,
-        repository_id: str,
-        pr_id: int
+        self, project_id: str, repository_id: str, pr_id: int
     ) -> List[Dict]:
         """
         Get all comment threads for a PR.
@@ -1111,7 +1140,7 @@ class AzureDevOpsClient:
             List of thread objects with comments and status
         """
         # v2.6.31: URL-encode project name for spaces (e.g., "My Project" -> "My%20Project")
-        encoded_project = quote(project_id, safe='')
+        encoded_project = quote(project_id, safe="")
 
         url = (
             f"{self.base_url}/{encoded_project}/_apis/git/repositories/"
@@ -1123,7 +1152,7 @@ class AzureDevOpsClient:
             "devops_fetching_pr_threads",
             pr_id=pr_id,
             project_id=project_id,
-            encoded_project=encoded_project
+            encoded_project=encoded_project,
         )
 
         try:
@@ -1136,22 +1165,16 @@ class AzureDevOpsClient:
                 response.raise_for_status()
                 data = await response.json()
 
-                threads = data.get('value', [])
+                threads = data.get("value", [])
 
                 logger.info(
-                    "devops_pr_threads_fetched",
-                    pr_id=pr_id,
-                    thread_count=len(threads)
+                    "devops_pr_threads_fetched", pr_id=pr_id, thread_count=len(threads)
                 )
 
                 return threads
 
         except Exception as e:
-            logger.error(
-                "pr_threads_fetch_failed",
-                pr_id=pr_id,
-                error=str(e)
-            )
+            logger.error("pr_threads_fetch_failed", pr_id=pr_id, error=str(e))
             # Return empty list on error - don't fail feedback collection
             return []
 
@@ -1188,8 +1211,7 @@ class AzureDevOpsClient:
                     except Exception as e:
                         # v2.6.4: Don't let verification errors affect cleanup
                         logger.warning(
-                            "devops_session_verification_error",
-                            error=str(e)
+                            "devops_session_verification_error", error=str(e)
                         )
 
                 except Exception as e:
