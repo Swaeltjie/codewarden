@@ -7,10 +7,11 @@ Provides health and metrics endpoints for monitoring reliability features:
 - Response cache statistics
 - Idempotency statistics
 
-Version: 2.5.12 - Comprehensive type hints
+Version: 2.7.3 - Fixed health score logic, sanitized errors, added bool check for days
 """
+import re
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from src.services.circuit_breaker import CircuitBreakerManager
 from src.services.response_cache import ResponseCache
@@ -69,9 +70,7 @@ class ReliabilityHealthHandler:
 
             # Determine overall health
             overall_health = self._calculate_overall_health(
-                circuit_breaker_states,
-                cache_stats,
-                idempotency_stats
+                circuit_breaker_states, cache_stats, idempotency_stats
             )
 
             response = {
@@ -82,26 +81,28 @@ class ReliabilityHealthHandler:
                     "circuit_breakers": {
                         "status": overall_health["circuit_breaker_status"],
                         "services": circuit_breaker_states,
-                        "summary": self._summarize_circuit_breakers(circuit_breaker_states)
+                        "summary": self._summarize_circuit_breakers(
+                            circuit_breaker_states
+                        ),
                     },
                     "response_cache": {
                         "status": overall_health["cache_status"],
                         "statistics": cache_stats,
-                        "health": self._assess_cache_health(cache_stats)
+                        "health": self._assess_cache_health(cache_stats),
                     },
                     "idempotency": {
                         "status": overall_health["idempotency_status"],
                         "statistics": idempotency_stats,
-                        "health": self._assess_idempotency_health(idempotency_stats)
-                    }
+                        "health": self._assess_idempotency_health(idempotency_stats),
+                    },
                 },
-                "overall_health_score": overall_health["health_score"]
+                "overall_health_score": overall_health["health_score"],
             }
 
             logger.info(
                 "reliability_health_check_completed",
                 overall_status=overall_health["status"],
-                health_score=overall_health["health_score"]
+                health_score=overall_health["health_score"],
             )
 
             return response
@@ -110,21 +111,19 @@ class ReliabilityHealthHandler:
             logger.exception(
                 "reliability_health_check_failed",
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
 
+            # Return sanitized error - don't expose internal details
             return {
                 "status": "error",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "error": str(e),
-                "error_type": type(e).__name__
+                "error": "Failed to retrieve health status",
+                "error_code": "HEALTH_CHECK_ERROR",
             }
 
     def _calculate_overall_health(
-        self,
-        circuit_breaker_states: Dict,
-        cache_stats: Dict,
-        idempotency_stats: Dict
+        self, circuit_breaker_states: Dict, cache_stats: Dict, idempotency_stats: Dict
     ) -> Dict[str, Any]:
         """
         Calculate overall health status.
@@ -141,11 +140,13 @@ class ReliabilityHealthHandler:
 
         # Circuit breaker health
         cb_open_count = sum(
-            1 for state in circuit_breaker_states.values()
+            1
+            for state in circuit_breaker_states.values()
             if state.get("state") == "OPEN"
         )
         cb_half_open_count = sum(
-            1 for state in circuit_breaker_states.values()
+            1
+            for state in circuit_breaker_states.values()
             if state.get("state") == "HALF_OPEN"
         )
 
@@ -180,6 +181,8 @@ class ReliabilityHealthHandler:
 
         # Determine overall status
         if health_score >= HEALTH_SCORE_EXCELLENT:
+            overall_status = "excellent"
+        elif health_score >= HEALTH_SCORE_HEALTHY:
             overall_status = "healthy"
         elif health_score >= HEALTH_SCORE_DEGRADED:
             overall_status = "degraded"
@@ -191,7 +194,7 @@ class ReliabilityHealthHandler:
             "health_score": health_score,
             "circuit_breaker_status": cb_status,
             "cache_status": cache_status,
-            "idempotency_status": idempotency_status
+            "idempotency_status": idempotency_status,
         }
 
     def _summarize_circuit_breakers(self, states: Dict) -> Dict[str, int]:
@@ -208,7 +211,7 @@ class ReliabilityHealthHandler:
             "total_services": len(states),
             "closed": 0,
             "open": 0,
-            "half_open": 0
+            "half_open": 0,
         }
 
         for state in states.values():
@@ -239,7 +242,9 @@ class ReliabilityHealthHandler:
         issues = []
 
         if cache_efficiency < HEALTH_CHECK_CACHE_EFFICIENCY_LOW:
-            issues.append(f"Low cache efficiency (<{HEALTH_CHECK_CACHE_EFFICIENCY_LOW}%)")
+            issues.append(
+                f"Low cache efficiency (<{HEALTH_CHECK_CACHE_EFFICIENCY_LOW}%)"
+            )
 
         if active_entries == 0:
             issues.append("No cached entries")
@@ -294,7 +299,7 @@ class ReliabilityHealthHandler:
             return {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "circuit_breakers": states,
-                "summary": self._summarize_circuit_breakers(states)
+                "summary": self._summarize_circuit_breakers(states),
             }
 
         except Exception as e:
@@ -302,11 +307,13 @@ class ReliabilityHealthHandler:
             return {
                 "status": "error",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "error": str(e),
-                "error_type": type(e).__name__
+                "error": "Failed to retrieve circuit breaker status",
+                "error_code": "CIRCUIT_BREAKER_ERROR",
             }
 
-    async def get_cache_statistics(self, repository: str = None) -> Dict[str, Any]:
+    async def get_cache_statistics(
+        self, repository: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Get detailed cache statistics.
 
@@ -318,31 +325,34 @@ class ReliabilityHealthHandler:
         """
         # Validate repository parameter
         if repository is not None:
-            import re
             if not isinstance(repository, str):
-                logger.warning("invalid_repository_type", repository_type=type(repository).__name__)
+                logger.warning(
+                    "invalid_repository_type", repository_type=type(repository).__name__
+                )
                 return {
                     "status": "error",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "error": "repository parameter must be a string",
-                    "error_type": "ValueError"
+                    "error_type": "ValueError",
                 }
-            if not re.match(r'^[a-zA-Z0-9_\-\.]{1,500}$', repository):
+            if not re.match(r"^[a-zA-Z0-9_\-\.]{1,500}$", repository):
                 logger.warning("invalid_repository_parameter", repository=repository)
                 return {
                     "status": "error",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "error": "Invalid repository name format (allowed: alphanumeric, dash, underscore, dot, max 500 chars)",
-                    "error_type": "ValueError"
+                    "error_type": "ValueError",
                 }
 
         try:
-            stats = await self.response_cache.get_cache_statistics(repository=repository)
+            stats = await self.response_cache.get_cache_statistics(
+                repository=repository
+            )
 
             return {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "cache_statistics": stats,
-                "health_assessment": self._assess_cache_health(stats)
+                "health_assessment": self._assess_cache_health(stats),
             }
 
         except Exception as e:
@@ -350,8 +360,8 @@ class ReliabilityHealthHandler:
             return {
                 "status": "error",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "error": str(e),
-                "error_type": type(e).__name__
+                "error": "Failed to retrieve cache statistics",
+                "error_code": "CACHE_STATS_ERROR",
             }
 
     async def get_idempotency_statistics(self, days: int = 7) -> Dict[str, Any]:
@@ -364,14 +374,21 @@ class ReliabilityHealthHandler:
         Returns:
             Idempotency statistics
         """
-        # Validate days parameter
-        if not isinstance(days, int) or days < 1 or days > 365:
-            logger.warning("invalid_days_parameter", days=days, days_type=type(days).__name__)
+        # Validate days parameter (check bool first since bool is subclass of int)
+        if (
+            isinstance(days, bool)
+            or not isinstance(days, int)
+            or days < 1
+            or days > 365
+        ):
+            logger.warning(
+                "invalid_days_parameter", days=days, days_type=type(days).__name__
+            )
             return {
                 "status": "error",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "error": "days parameter must be an integer between 1 and 365",
-                "error_type": "ValueError"
+                "error_code": "INVALID_PARAMETER",
             }
 
         try:
@@ -380,7 +397,7 @@ class ReliabilityHealthHandler:
             return {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "idempotency_statistics": stats,
-                "health_assessment": self._assess_idempotency_health(stats)
+                "health_assessment": self._assess_idempotency_health(stats),
             }
 
         except Exception as e:
@@ -388,8 +405,8 @@ class ReliabilityHealthHandler:
             return {
                 "status": "error",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "error": str(e),
-                "error_type": type(e).__name__
+                "error": "Failed to retrieve idempotency statistics",
+                "error_code": "IDEMPOTENCY_STATS_ERROR",
             }
 
     async def reset_circuit_breakers(self) -> Dict[str, Any]:
@@ -409,14 +426,16 @@ class ReliabilityHealthHandler:
             return {
                 "status": "success",
                 "message": "All circuit breakers reset to CLOSED state",
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:
             logger.exception("circuit_breaker_reset_failed", error=str(e))
             return {
                 "status": "error",
-                "error": str(e)
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": "Failed to reset circuit breakers",
+                "error_code": "CIRCUIT_BREAKER_RESET_ERROR",
             }
 
     async def cleanup_expired_cache(self) -> Dict[str, Any]:
@@ -436,12 +455,14 @@ class ReliabilityHealthHandler:
             return {
                 "status": "success",
                 "deleted_entries": deleted_count,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:
             logger.exception("cache_cleanup_failed", error=str(e))
             return {
                 "status": "error",
-                "error": str(e)
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": "Failed to cleanup expired cache",
+                "error_code": "CACHE_CLEANUP_ERROR",
             }

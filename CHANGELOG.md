@@ -5,6 +5,27 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.3] - 2025-12-10
+
+### Fixed - Handler Reliability and Security
+
+Comprehensive code review of `src/handlers/` files with fixes for reliability, security, and concurrency.
+
+**pr_webhook.py:**
+- Fixed resource leak in `__aexit__` - cleanup errors now isolated to prevent masking exceptions
+- Added semaphore protection to `_review_file_group()` and `_cross_file_analysis()` for AI API rate limiting
+- Added input validation in `_fetch_changed_files()` for malformed API responses
+- Added 30s timeout to table storage operations in `_save_review_history()`
+- Moved `os` and `pathlib` imports to module level
+
+**reliability_health.py:**
+- Fixed health score logic bug - scores 80-89 now correctly return "healthy" not "degraded"
+- Sanitized all error responses - removed internal exception details from API responses
+- Added bool check in days validation (bool is subclass of int in Python)
+- Added consistent error response structure with `error_code` instead of `error_type`
+- Moved `re` import to module level
+- Added `Optional` type hint for repository parameter
+
 ## [2.7.2] - 2025-12-10
 
 ### Fixed - Reliability and Security Hardening

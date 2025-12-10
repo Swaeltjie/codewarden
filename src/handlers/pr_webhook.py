@@ -12,9 +12,11 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.7.2 - Fixed missing pr_id parameter in _review_single_file causing token aggregation bug
+Version: 2.7.3 - Fixed resource cleanup, added semaphore to group/cross-file reviews, timeouts
 """
 import asyncio
+import os
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 from collections import Counter
@@ -81,11 +83,20 @@ class PRWebhookHandler:
             raise
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
-        """Async context manager exit - cleanup resources."""
+        """Async context manager exit - cleanup resources with error isolation."""
+        # Best-effort cleanup - don't let cleanup errors mask original exceptions
         if self.devops_client:
-            await self.devops_client.close()
+            try:
+                await self.devops_client.close()
+            except Exception as e:
+                logger.warning("devops_client_cleanup_failed", error=str(e))
+
         if self.ai_client:
-            await self.ai_client.close()
+            try:
+                await self.ai_client.close()
+            except Exception as e:
+                logger.warning("ai_client_cleanup_failed", error=str(e))
+
         return False
 
     async def handle_pr_event(self, pr_event: PREvent) -> ReviewResult:
@@ -285,7 +296,6 @@ class PRWebhookHandler:
         """
         Fetch changed files for review.
 
-        v2.6.0: Now fetches ALL file types - no longer filters.
         Uses semaphore-limited parallel fetching to prevent overwhelming
         Azure DevOps API while maintaining efficiency.
 
@@ -296,6 +306,15 @@ class PRWebhookHandler:
         Returns:
             List of FileChange objects (all file types)
         """
+        # Validate input - defend against malformed API responses
+        if not isinstance(file_list, list):
+            logger.error("invalid_file_list_type", type=type(file_list).__name__)
+            return []
+
+        if not file_list:
+            logger.info("empty_file_list")
+            return []
+
         all_files = file_list
 
         async def fetch_with_context(
@@ -410,9 +429,6 @@ class PRWebhookHandler:
         Returns:
             True if safe, False otherwise
         """
-        import os
-        from pathlib import Path
-
         # Check for empty path
         if not file_path or not isinstance(file_path, str):
             return False
@@ -580,13 +596,16 @@ class PRWebhookHandler:
     async def _review_file_group(
         self, file_group: List[FileChange], pr_event: PREvent, learning_context: dict
     ) -> ReviewResult:
-        """Review a group of related files."""
+        """Review a group of related files with concurrency limiting."""
 
         prompt = self.prompt_factory.build_group_prompt(
             files=file_group, learning_context=learning_context
         )
 
-        review_json = await self.ai_client.review_code(prompt=prompt)
+        # Acquire semaphore to prevent overwhelming AI API
+        async with self._review_semaphore:
+            review_json = await self.ai_client.review_code(prompt=prompt)
+
         return ReviewResult.from_ai_response(review_json, pr_event.pr_id)
 
     async def _review_single_file(
@@ -645,11 +664,14 @@ class PRWebhookHandler:
     async def _cross_file_analysis(
         self, critical_results: List[ReviewResult], pr_event: PREvent
     ) -> dict:
-        """Analyze dependencies between files with issues."""
+        """Analyze dependencies between files with issues with concurrency limiting."""
 
         prompt = self.prompt_factory.build_cross_file_prompt(results=critical_results)
 
-        analysis = await self.ai_client.review_code(prompt=prompt)
+        # Acquire semaphore to prevent overwhelming AI API
+        async with self._review_semaphore:
+            analysis = await self.ai_client.review_code(prompt=prompt)
+
         return {"analysis": analysis, "files_analyzed": len(critical_results)}
 
     async def _post_review_results(
@@ -727,8 +749,11 @@ class PRWebhookHandler:
             strategy: Review strategy used
         """
         try:
-            # v2.6.2: Run blocking table operations in thread pool to avoid blocking event loop
-            await asyncio.to_thread(ensure_table_exists, "reviewhistory")
+            # Run blocking table operations in thread pool with timeout
+            await asyncio.wait_for(
+                asyncio.to_thread(ensure_table_exists, "reviewhistory"),
+                timeout=30.0,
+            )
             table_client = get_table_client("reviewhistory")
 
             # Create review history entity
@@ -749,9 +774,12 @@ class PRWebhookHandler:
             history_entity.review_strategy = strategy.value
             history_entity.ai_model = self.settings.OPENAI_MODEL
 
-            # v2.6.2: Run blocking table upsert in thread pool
-            await asyncio.to_thread(
-                table_client.upsert_entity, history_entity.to_table_entity()
+            # Run blocking table upsert in thread pool with timeout
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    table_client.upsert_entity, history_entity.to_table_entity()
+                ),
+                timeout=30.0,
             )
 
             logger.info(
