@@ -22,7 +22,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Application version - single source of truth
-__version__ = "2.7.1"
+__version__ = "2.7.2"
 
 
 class Settings(BaseSettings):

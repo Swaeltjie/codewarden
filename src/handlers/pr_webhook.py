@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.6.34 - Fixed path validation for Azure DevOps root-relative paths
+Version: 2.7.2 - Fixed missing pr_id parameter in _review_single_file causing token aggregation bug
 """
 import asyncio
 from typing import Dict, List, Optional, Tuple
@@ -87,14 +87,14 @@ class PRWebhookHandler:
         if self.ai_client:
             await self.ai_client.close()
         return False
-    
+
     async def handle_pr_event(self, pr_event: PREvent) -> ReviewResult:
         """
         Main entry point for handling a PR event.
-        
+
         Args:
             pr_event: Parsed PR event from Azure DevOps
-            
+
         Returns:
             ReviewResult with findings and recommendations
         """
@@ -102,30 +102,30 @@ class PRWebhookHandler:
 
         # Bind context to logger for this request
         request_logger = logger.bind(
-            pr_id=pr_event.pr_id,
-            repository=pr_event.repository_name
+            pr_id=pr_event.pr_id, repository=pr_event.repository_name
         )
 
         request_logger.info("pr_review_started")
 
         try:
             # Step 0: Check for duplicate request (idempotency)
-            is_duplicate, previous_result = await self.idempotency_checker.is_duplicate_request(
-                pr_id=pr_event.pr_id,
-                repository=pr_event.repository_name,
-                project=pr_event.project_name,
-                event_type=pr_event.event_type,
-                source_commit_id=pr_event.source_commit_id
+            is_duplicate, previous_result = (
+                await self.idempotency_checker.is_duplicate_request(
+                    pr_id=pr_event.pr_id,
+                    repository=pr_event.repository_name,
+                    project=pr_event.project_name,
+                    event_type=pr_event.event_type,
+                    source_commit_id=pr_event.source_commit_id,
+                )
             )
 
             if is_duplicate:
                 request_logger.info(
-                    "duplicate_request_ignored",
-                    previous_result=previous_result
+                    "duplicate_request_ignored", previous_result=previous_result
                 )
                 return ReviewResult.create_empty(
                     pr_id=pr_event.pr_id,
-                    message=f"Duplicate request - already processed. Previous result: {previous_result}"
+                    message=f"Duplicate request - already processed. Previous result: {previous_result}",
                 )
 
             # Record this request as being processed
@@ -135,27 +135,27 @@ class PRWebhookHandler:
                 project=pr_event.project_name,
                 event_type=pr_event.event_type,
                 source_commit_id=pr_event.source_commit_id,
-                result_summary="processing"
+                result_summary="processing",
             )
 
             # Step 1: Fetch PR details
             pr_details = await self.devops_client.get_pull_request_details(
                 project_id=pr_event.project_id,
                 repository_id=pr_event.repository_id,
-                pr_id=pr_event.pr_id
+                pr_id=pr_event.pr_id,
             )
 
             # Step 1b: Fetch changed files list (separate API call)
             file_list = await self.devops_client.get_pull_request_files(
                 project_id=pr_event.project_id,
                 repository_id=pr_event.repository_id,
-                pr_id=pr_event.pr_id
+                pr_id=pr_event.pr_id,
             )
 
             request_logger.info(
                 "pr_details_fetched",
-                title=pr_details.get('title'),
-                file_count=len(file_list)
+                title=pr_details.get("title"),
+                file_count=len(file_list),
             )
 
             # Step 2: Get changed files with diffs
@@ -164,48 +164,55 @@ class PRWebhookHandler:
             if not changed_files:
                 request_logger.info("no_files_to_review")
                 return ReviewResult.create_empty(
-                    pr_id=pr_event.pr_id,
-                    message="No files found to review in this PR"
+                    pr_id=pr_event.pr_id, message="No files found to review in this PR"
                 )
 
             # Count files by category for logging (v2.6.0 - universal review)
             # Note: file_type is already a string due to use_enum_values=True in FileChange
             category_counts = Counter(f.file_type for f in changed_files)
-            top_categories = dict(category_counts.most_common(5))  # Log top 5 categories
+            top_categories = dict(
+                category_counts.most_common(5)
+            )  # Log top 5 categories
 
             request_logger.info(
                 "changed_files_classified",
                 total_files=len(changed_files),
                 unique_categories=len(category_counts),
-                top_categories=top_categories
+                top_categories=top_categories,
             )
-            
+
             # Step 3: Parse diffs (diff-only analysis)
             for file in changed_files:
-                file.changed_sections = await self.diff_parser.parse_diff(file.diff_content)
-            
+                file.changed_sections = await self.diff_parser.parse_diff(
+                    file.diff_content
+                )
+
             total_changed_lines = sum(
                 len(section.added_lines) + len(section.removed_lines)
                 for file in changed_files
                 for section in file.changed_sections
             )
-            
+
             request_logger.info(
                 "diffs_parsed",
                 total_changed_lines=total_changed_lines,
-                avg_per_file=round(total_changed_lines / len(changed_files), 2) if changed_files else 0
+                avg_per_file=(
+                    round(total_changed_lines / len(changed_files), 2)
+                    if changed_files
+                    else 0
+                ),
             )
 
             # Step 4: Determine review strategy
             strategy = self.context_manager.determine_strategy(changed_files)
 
             request_logger.info("review_strategy_determined", strategy=strategy.value)
-            
+
             # Step 5: Get learning context (feedback from past reviews)
             learning_context = await self.feedback_tracker.get_learning_context(
                 repository=pr_event.repository_name
             )
-            
+
             # Step 6: Execute review based on strategy
             if strategy == ReviewStrategy.SINGLE_PASS:
                 review_result = await self._single_pass_review(
@@ -219,7 +226,7 @@ class PRWebhookHandler:
                 review_result = await self._hierarchical_review(
                     changed_files, pr_event, learning_context
                 )
-            
+
             # Calculate duration BEFORE posting so it appears correctly in comments
             duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             review_result.duration_seconds = duration
@@ -228,13 +235,15 @@ class PRWebhookHandler:
             await self._post_review_results(pr_event, review_result)
 
             # Step 8: Save review history for pattern detection
-            await self._save_review_history(pr_event, pr_details, review_result, strategy)
+            await self._save_review_history(
+                pr_event, pr_details, review_result, strategy
+            )
 
             request_logger.info(
                 "pr_review_completed",
                 duration_seconds=duration,
                 issues_found=len(review_result.issues),
-                recommendation=review_result.recommendation
+                recommendation=review_result.recommendation,
             )
 
             # Update idempotency record with final result
@@ -243,11 +252,11 @@ class PRWebhookHandler:
                 repository=pr_event.repository_name,
                 event_type=pr_event.event_type,
                 source_commit_id=pr_event.source_commit_id,
-                result_summary=f"{review_result.recommendation}: {len(review_result.issues)} issues"
+                result_summary=f"{review_result.recommendation}: {len(review_result.issues)} issues",
             )
 
             return review_result
-            
+
         except Exception as e:
             # Update idempotency record with failure status
             try:
@@ -256,26 +265,22 @@ class PRWebhookHandler:
                     repository=pr_event.repository_name,
                     event_type=pr_event.event_type,
                     source_commit_id=pr_event.source_commit_id,
-                    result_summary=f"FAILED: {type(e).__name__}: {str(e)[:100]}"
+                    result_summary=f"FAILED: {type(e).__name__}: {str(e)[:100]}",
                 )
             except Exception as update_error:
                 request_logger.warning(
                     "idempotency_update_failed_after_error",
                     error=str(update_error),
-                    original_error=str(e)
+                    original_error=str(e),
                 )
 
             request_logger.exception(
-                "pr_review_failed",
-                error=str(e),
-                error_type=type(e).__name__
+                "pr_review_failed", error=str(e), error_type=type(e).__name__
             )
             raise
-    
+
     async def _fetch_changed_files(
-        self,
-        pr_event: PREvent,
-        file_list: List[Dict]
+        self, pr_event: PREvent, file_list: List[Dict]
     ) -> List[FileChange]:
         """
         Fetch changed files for review.
@@ -293,14 +298,16 @@ class PRWebhookHandler:
         """
         all_files = file_list
 
-        async def fetch_with_context(file_info: dict) -> Tuple[dict, str, Optional[Exception]]:
+        async def fetch_with_context(
+            file_info: dict,
+        ) -> Tuple[dict, str, Optional[Exception]]:
             """
             Fetch diff with error context preserved.
 
             Returns tuple of (file_info, diff_content, error) to preserve context.
             """
             # changeEntries API returns path in item.path
-            file_path = file_info.get('item', {}).get('path', file_info.get('path', ''))
+            file_path = file_info.get("item", {}).get("path", file_info.get("path", ""))
             if not file_path:
                 return (file_info, "", ValueError("No file path in change entry"))
 
@@ -311,7 +318,7 @@ class PRWebhookHandler:
                         repository_id=pr_event.repository_id,
                         file_path=file_path,
                         source_commit=pr_event.source_branch,
-                        target_commit=pr_event.target_branch
+                        target_commit=pr_event.target_branch,
                     )
                     return (file_info, diff, None)
                 except Exception as e:
@@ -329,7 +336,7 @@ class PRWebhookHandler:
 
         for file_info, diff_result, error in results:
             # Extract path from changeEntries structure (item.path)
-            file_path = file_info.get('item', {}).get('path', file_info.get('path', ''))
+            file_path = file_info.get("item", {}).get("path", file_info.get("path", ""))
 
             # Log failures with preserved context
             if error is not None:
@@ -338,7 +345,7 @@ class PRWebhookHandler:
                     "diff_fetch_failed",
                     file_path=file_path,
                     error=str(error),
-                    error_type=type(error).__name__
+                    error_type=type(error).__name__,
                 )
                 continue
 
@@ -347,24 +354,26 @@ class PRWebhookHandler:
 
             # Include ALL files - no filtering! (v2.6.0)
             # Even "generic" category files get basic best practice review
-            changed_files.append(FileChange(
-                path=file_path,
-                file_type=file_category,
-                diff_content=diff_result,
-                lines_added=file_info.get('item', {}).get('linesAdded', 0),
-                lines_deleted=file_info.get('item', {}).get('linesDeleted', 0)
-            ))
+            changed_files.append(
+                FileChange(
+                    path=file_path,
+                    file_type=file_category,
+                    diff_content=diff_result,
+                    lines_added=file_info.get("item", {}).get("linesAdded", 0),
+                    lines_deleted=file_info.get("item", {}).get("linesDeleted", 0),
+                )
+            )
 
         if error_count > 0:
             logger.warning(
                 "diff_fetch_partial_failure",
                 total_files=len(all_files),
                 failed_count=error_count,
-                success_count=len(all_files) - error_count
+                success_count=len(all_files) - error_count,
             )
 
         return changed_files
-    
+
     def _classify_file(self, file_path: str) -> FileCategory:
         """
         Classify file using the FileTypeRegistry.
@@ -409,25 +418,27 @@ class PRWebhookHandler:
             return False
 
         # Check for null bytes
-        if '\x00' in file_path:
+        if "\x00" in file_path:
             return False
 
         # Check for absolute paths (should be relative)
         # Note: Azure DevOps returns repo root-relative paths starting with '/'
         # like '/azure-pipelines.yml' - these are safe and expected
-        path_to_check = file_path.lstrip('/') if file_path.startswith('/') else file_path
+        path_to_check = (
+            file_path.lstrip("/") if file_path.startswith("/") else file_path
+        )
         if os.path.isabs(path_to_check):
             return False
 
         # Check for suspicious patterns BEFORE normalization
         # This prevents bypassing checks with encoded paths
         suspicious_patterns = [
-            '../',
-            '..\\',
-            '/etc/',
-            '/proc/',
-            'c:\\',
-            '\\windows\\',
+            "../",
+            "..\\",
+            "/etc/",
+            "/proc/",
+            "c:\\",
+            "\\windows\\",
         ]
 
         path_lower = file_path.lower()
@@ -439,20 +450,20 @@ class PRWebhookHandler:
             normalized = os.path.normpath(file_path)
 
             # Check for path traversal patterns
-            if '..' in Path(normalized).parts:
+            if ".." in Path(normalized).parts:
                 return False
 
             # Check if normalized path is absolute (after stripping leading /)
             # Note: We already handled Azure DevOps root-relative paths at line 418
             # by stripping leading '/'. The normalized path should not be absolute.
             # Use lstrip to handle the case where normpath preserves leading slashes
-            normalized_stripped = normalized.lstrip('/\\')
+            normalized_stripped = normalized.lstrip("/\\")
             if os.path.isabs(normalized_stripped):
                 return False
 
             # Additional check: ensure normalized path doesn't escape current directory
             # by checking that it doesn't start with parent directory references
-            if normalized.startswith('..'):
+            if normalized.startswith(".."):
                 return False
 
         except (ValueError, OSError):
@@ -461,65 +472,60 @@ class PRWebhookHandler:
         return True
 
     async def _single_pass_review(
-        self,
-        files: List[FileChange],
-        pr_event: PREvent,
-        learning_context: dict
+        self, files: List[FileChange], pr_event: PREvent, learning_context: dict
     ) -> ReviewResult:
         """Single-pass review for small PRs."""
-        
+
         # Build prompt with all changed sections
         prompt = self.prompt_factory.build_single_pass_prompt(
             files=files,
             pr_title=pr_event.title,  # Use attribute, not .get()
-            learning_context=learning_context
+            learning_context=learning_context,
         )
-        
+
         # Get AI review
         review_json = await self.ai_client.review_code(
-            prompt=prompt,
-            model=self.settings.OPENAI_MODEL
+            prompt=prompt, model=self.settings.OPENAI_MODEL
         )
-        
+
         # Parse result
         return ReviewResult.from_ai_response(review_json, pr_event.pr_id)
-    
+
     async def _chunked_review(
-        self,
-        files: List[FileChange],
-        pr_event: PREvent,
-        learning_context: dict
+        self, files: List[FileChange], pr_event: PREvent, learning_context: dict
     ) -> ReviewResult:
         """Chunked review for medium PRs."""
-        
+
         # Group related files
         file_groups = self.context_manager.group_related_files(files)
-        
+
         # Review each group in parallel
         tasks = [
             self._review_file_group(group, pr_event, learning_context)
             for group in file_groups
         ]
-        
+
         group_results = await asyncio.gather(*tasks)
-        
+
         # Aggregate results
         return ReviewResult.aggregate(group_results, pr_event.pr_id)
-    
+
     async def _hierarchical_review(
-        self,
-        files: List[FileChange],
-        pr_event: PREvent,
-        learning_context: dict
+        self, files: List[FileChange], pr_event: PREvent, learning_context: dict
     ) -> ReviewResult:
         """Hierarchical review for large PRs with concurrency limiting."""
 
-        async def review_with_semaphore(file: FileChange) -> Tuple[FileChange, ReviewResult, Optional[Exception]]:
+        async def review_with_semaphore(
+            file: FileChange,
+        ) -> Tuple[FileChange, ReviewResult, Optional[Exception]]:
             """Review single file with semaphore and error context preservation."""
             async with self._review_semaphore:
                 try:
                     result = await self._review_single_file(
-                        file, learning_context, repository=pr_event.repository_name
+                        file,
+                        learning_context,
+                        pr_id=pr_event.pr_id,
+                        repository=pr_event.repository_name,
                     )
                     return (file, result, None)
                 except Exception as e:
@@ -527,15 +533,19 @@ class PRWebhookHandler:
                         "file_review_failed",
                         file_path=file.path,
                         error=str(e),
-                        error_type=type(e).__name__
+                        error_type=type(e).__name__,
                     )
                     # Return empty result for failed file
-                    return (file, ReviewResult.create_empty(pr_event.pr_id, f"Review failed: {str(e)}"), e)
+                    return (
+                        file,
+                        ReviewResult.create_empty(
+                            pr_event.pr_id, f"Review failed: {str(e)}"
+                        ),
+                        e,
+                    )
 
         # Phase 1: Review each file individually with concurrency limiting
-        results = await asyncio.gather(
-            *[review_with_semaphore(file) for file in files]
-        )
+        results = await asyncio.gather(*[review_with_semaphore(file) for file in files])
 
         # Extract individual results, logging any failures
         individual_results = []
@@ -549,50 +559,42 @@ class PRWebhookHandler:
             logger.warning(
                 "hierarchical_review_partial_failure",
                 total_files=len(files),
-                failed_count=failed_count
+                failed_count=failed_count,
             )
-        
+
         # Phase 2: Cross-file analysis (only files with issues)
-        critical_files = [
-            r for r in individual_results 
-            if r.has_critical_issues()
-        ]
-        
+        critical_files = [r for r in individual_results if r.has_critical_issues()]
+
         if critical_files:
             cross_file_analysis = await self._cross_file_analysis(
                 critical_files, pr_event
             )
         else:
             cross_file_analysis = None
-        
+
         # Phase 3: Aggregate
         return ReviewResult.hierarchical_aggregate(
-            individual_results,
-            cross_file_analysis,
-            pr_event.pr_id
+            individual_results, cross_file_analysis, pr_event.pr_id
         )
-    
+
     async def _review_file_group(
-        self,
-        file_group: List[FileChange],
-        pr_event: PREvent,
-        learning_context: dict
+        self, file_group: List[FileChange], pr_event: PREvent, learning_context: dict
     ) -> ReviewResult:
         """Review a group of related files."""
-        
+
         prompt = self.prompt_factory.build_group_prompt(
-            files=file_group,
-            learning_context=learning_context
+            files=file_group, learning_context=learning_context
         )
-        
+
         review_json = await self.ai_client.review_code(prompt=prompt)
         return ReviewResult.from_ai_response(review_json, pr_event.pr_id)
-    
+
     async def _review_single_file(
         self,
         file: FileChange,
         learning_context: dict,
-        repository: Optional[str] = None
+        pr_id: int,
+        repository: Optional[str] = None,
     ) -> ReviewResult:
         """
         Review a single file (diff-only) with response caching.
@@ -605,78 +607,67 @@ class PRWebhookHandler:
             cached_result = await self.response_cache.get_cached_review(
                 repository=repository,
                 diff_content=file.diff_content,
-                file_path=file.path
+                file_path=file.path,
             )
 
             if cached_result:
                 logger.info(
-                    "cache_hit_file_review",
-                    file_path=file.path,
-                    repository=repository
+                    "cache_hit_file_review", file_path=file.path, repository=repository
                 )
                 return cached_result
 
         # Cache miss - perform AI review
         prompt = self.prompt_factory.build_file_prompt(
-            file=file,
-            learning_context=learning_context
+            file=file, learning_context=learning_context
         )
 
         review_json = await self.ai_client.review_code(prompt=prompt)
-        result = ReviewResult.from_ai_response(review_json, file_path=file.path)
+        result = ReviewResult.from_ai_response(review_json, pr_id, file_path=file.path)
 
         # Store in cache for future use
         if repository and file.diff_content:
-            metadata = review_json.get('_metadata', {})
+            metadata = review_json.get("_metadata", {})
             await self.response_cache.cache_review(
                 repository=repository,
                 diff_content=file.diff_content,
                 file_path=file.path,
                 file_type=file.file_type if file.file_type else "unknown",
                 review_result=result,
-                tokens_used=metadata.get('tokens_used', 0),
-                estimated_cost=metadata.get('estimated_cost', 0.0),
-                model_used=metadata.get('model', 'unknown')
+                tokens_used=metadata.get("tokens_used", 0),
+                estimated_cost=metadata.get("estimated_cost", 0.0),
+                model_used=metadata.get("model", "unknown"),
             )
 
-            logger.info(
-                "review_cached",
-                file_path=file.path,
-                repository=repository
-            )
+            logger.info("review_cached", file_path=file.path, repository=repository)
 
         return result
-    
+
     async def _cross_file_analysis(
-        self,
-        critical_results: List[ReviewResult],
-        pr_event: PREvent
+        self, critical_results: List[ReviewResult], pr_event: PREvent
     ) -> dict:
         """Analyze dependencies between files with issues."""
-        
-        prompt = self.prompt_factory.build_cross_file_prompt(
-            results=critical_results
-        )
-        
+
+        prompt = self.prompt_factory.build_cross_file_prompt(results=critical_results)
+
         analysis = await self.ai_client.review_code(prompt=prompt)
         return {"analysis": analysis, "files_analyzed": len(critical_results)}
-    
+
     async def _post_review_results(
-        self,
-        pr_event: PREvent,
-        review_result: ReviewResult
+        self, pr_event: PREvent, review_result: ReviewResult
     ) -> None:
         """Post review results as comments to Azure DevOps PR."""
 
         # Dry-run mode: skip posting, just log what would be posted
         if self.dry_run:
-            inline_count = sum(1 for i in review_result.issues if i.severity in ["critical", "high"])
+            inline_count = sum(
+                1 for i in review_result.issues if i.severity in ["critical", "high"]
+            )
             logger.info(
                 "dry_run_skip_posting",
                 pr_id=pr_event.pr_id,
                 issues_found=len(review_result.issues),
                 inline_comments_would_post=inline_count,
-                recommendation=review_result.recommendation
+                recommendation=review_result.recommendation,
             )
             return
 
@@ -693,7 +684,7 @@ class PRWebhookHandler:
             repository_id=pr_event.repository_id,
             pr_id=pr_event.pr_id,
             comment=summary_markdown,
-            thread_type="summary"
+            thread_type="summary",
         )
 
         # Individual inline comments for high/critical issues
@@ -707,14 +698,16 @@ class PRWebhookHandler:
                     pr_id=pr_event.pr_id,
                     file_path=issue.file_path,
                     line_number=issue.line_number,
-                    comment=inline_comment
+                    comment=inline_comment,
                 )
 
         logger.info(
             "review_results_posted",
             pr_id=pr_event.pr_id,
             summary_posted=True,
-            inline_comments=sum(1 for i in review_result.issues if i.severity in ["critical", "high"])
+            inline_comments=sum(
+                1 for i in review_result.issues if i.severity in ["critical", "high"]
+            ),
         )
 
     async def _save_review_history(
@@ -722,7 +715,7 @@ class PRWebhookHandler:
         pr_event: PREvent,
         pr_details: dict,
         review_result: ReviewResult,
-        strategy: ReviewStrategy
+        strategy: ReviewStrategy,
     ) -> None:
         """
         Save review history to table storage for pattern detection.
@@ -735,19 +728,21 @@ class PRWebhookHandler:
         """
         try:
             # v2.6.2: Run blocking table operations in thread pool to avoid blocking event loop
-            await asyncio.to_thread(ensure_table_exists, 'reviewhistory')
-            table_client = get_table_client('reviewhistory')
+            await asyncio.to_thread(ensure_table_exists, "reviewhistory")
+            table_client = get_table_client("reviewhistory")
 
             # Create review history entity
             history_entity = ReviewHistoryEntity.from_review_result(
                 review_result=review_result,
                 pr_data={
-                    'title': pr_details.get('title', 'Unknown'),
-                    'author': pr_details.get('createdBy', {}).get('displayName', 'Unknown')
+                    "title": pr_details.get("title", "Unknown"),
+                    "author": pr_details.get("createdBy", {}).get(
+                        "displayName", "Unknown"
+                    ),
                 },
                 repository=pr_event.repository_name,
                 project=pr_event.project_name,
-                repository_id=pr_event.repository_id
+                repository_id=pr_event.repository_id,
             )
 
             # Add strategy and AI model info
@@ -756,15 +751,14 @@ class PRWebhookHandler:
 
             # v2.6.2: Run blocking table upsert in thread pool
             await asyncio.to_thread(
-                table_client.upsert_entity,
-                history_entity.to_table_entity()
+                table_client.upsert_entity, history_entity.to_table_entity()
             )
 
             logger.info(
                 "review_history_saved",
                 review_id=review_result.review_id,
                 repository=pr_event.repository_name,
-                pr_id=pr_event.pr_id
+                pr_id=pr_event.pr_id,
             )
 
         except Exception as e:
@@ -773,5 +767,5 @@ class PRWebhookHandler:
                 "review_history_save_failed",
                 error=str(e),
                 error_type=type(e).__name__,
-                pr_id=pr_event.pr_id
+                pr_id=pr_event.pr_id,
             )
