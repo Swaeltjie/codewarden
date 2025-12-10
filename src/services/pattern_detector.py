@@ -4,7 +4,7 @@ Pattern Detector
 
 Analyzes historical review data to detect recurring issues and patterns.
 
-Version: 2.6.36 - Added days parameter validation
+Version: 2.7.2 - Added DoS protection and input validation in health score
 """
 import json
 from typing import List, Dict, Tuple, Optional
@@ -16,7 +16,7 @@ from src.utils.table_storage import (
     get_table_client,
     ensure_table_exists,
     sanitize_odata_value,
-    query_entities_paginated
+    query_entities_paginated,
 )
 from src.utils.config import get_settings
 from src.utils.constants import (
@@ -47,7 +47,10 @@ class PatternDetectorMetrics:
     - Repository coverage
     - Pattern detection rates
     """
-    analysis_started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    analysis_started_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     analysis_completed_at: Optional[datetime] = None
     repositories_analyzed: int = 0
     reviews_processed: int = 0
@@ -58,19 +61,25 @@ class PatternDetectorMetrics:
     def duration_seconds(self) -> float:
         """Calculate analysis duration."""
         if self.analysis_completed_at:
-            return (self.analysis_completed_at - self.analysis_started_at).total_seconds()
+            return (
+                self.analysis_completed_at - self.analysis_started_at
+            ).total_seconds()
         return 0.0
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for logging/metrics."""
         return {
             "analysis_started_at": self.analysis_started_at.isoformat(),
-            "analysis_completed_at": self.analysis_completed_at.isoformat() if self.analysis_completed_at else None,
+            "analysis_completed_at": (
+                self.analysis_completed_at.isoformat()
+                if self.analysis_completed_at
+                else None
+            ),
             "duration_seconds": self.duration_seconds,
             "repositories_analyzed": self.repositories_analyzed,
             "reviews_processed": self.reviews_processed,
             "patterns_found": self.patterns_found,
-            "errors_count": self.errors_count
+            "errors_count": self.errors_count,
         }
 
 
@@ -112,7 +121,9 @@ class PatternDetector:
         await self.close()
         return False
 
-    async def analyze_all_repositories(self, days: int = PATTERN_ANALYSIS_DAYS) -> List[Dict]:
+    async def analyze_all_repositories(
+        self, days: int = PATTERN_ANALYSIS_DAYS
+    ) -> List[Dict]:
         """
         Analyze patterns across all repositories.
 
@@ -140,8 +151,8 @@ class PatternDetector:
 
         logger.info("pattern_analysis_started", days=days)
 
-        ensure_table_exists('reviewhistory')
-        history_table = get_table_client('reviewhistory')
+        ensure_table_exists("reviewhistory")
+        history_table = get_table_client("reviewhistory")
 
         cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
 
@@ -152,25 +163,25 @@ class PatternDetector:
             # Use pagination to avoid loading all reviews into memory
             # Apply safety limit DURING iteration to prevent OOM
             reviews = []
-            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
+            for review in query_entities_paginated(
+                history_table,
+                query_filter=query_filter,
+                page_size=TABLE_STORAGE_BATCH_SIZE,
+            ):
                 # Check limit BEFORE appending to prevent loading excess data
                 if len(reviews) >= MAX_PATTERN_REVIEWS:
                     logger.warning(
                         "pattern_analysis_truncated",
                         max_reviews=MAX_PATTERN_REVIEWS,
                         days=days,
-                        reason="Safety limit to prevent memory exhaustion"
+                        reason="Safety limit to prevent memory exhaustion",
                     )
                     break
                 reviews.append(review)
 
             metrics.reviews_processed = len(reviews)
 
-            logger.info(
-                "reviews_loaded",
-                count=len(reviews),
-                days=days
-            )
+            logger.info("reviews_loaded", count=len(reviews), days=days)
 
             if not reviews:
                 logger.info("no_reviews_found_for_pattern_analysis")
@@ -181,7 +192,7 @@ class PatternDetector:
             # Group reviews by repository
             by_repository = defaultdict(list)
             for review in reviews:
-                repo = review.get('repository', 'unknown')
+                repo = review.get("repository", "unknown")
                 by_repository[repo].append(review)
 
             # Analyze patterns for each repository
@@ -190,9 +201,7 @@ class PatternDetector:
             for repository, repo_reviews in by_repository.items():
                 try:
                     patterns = await self._analyze_repository_patterns(
-                        repository,
-                        repo_reviews,
-                        days
+                        repository, repo_reviews, days
                     )
                     all_patterns.append(patterns)
                     metrics.repositories_analyzed += 1
@@ -202,12 +211,14 @@ class PatternDetector:
                     logger.warning(
                         "repository_pattern_analysis_failed",
                         repository=repository,
-                        error=str(e)
+                        error=str(e),
                     )
                     continue
 
             # Calculate total patterns found
-            metrics.patterns_found = sum(len(p.get('recurring_issues', [])) for p in all_patterns)
+            metrics.patterns_found = sum(
+                len(p.get("recurring_issues", [])) for p in all_patterns
+            )
             metrics.analysis_completed_at = datetime.now(timezone.utc)
             self._last_metrics = metrics
 
@@ -216,7 +227,7 @@ class PatternDetector:
                 repositories_analyzed=metrics.repositories_analyzed,
                 patterns_found=metrics.patterns_found,
                 duration_seconds=metrics.duration_seconds,
-                errors_count=metrics.errors_count
+                errors_count=metrics.errors_count,
             )
 
             return all_patterns
@@ -231,15 +242,12 @@ class PatternDetector:
                 days=days,
                 error=str(e),
                 error_type=type(e).__name__,
-                metrics=metrics.to_dict()
+                metrics=metrics.to_dict(),
             )
             return []
 
     async def _analyze_repository_patterns(
-        self,
-        repository: str,
-        reviews: List[dict],
-        days: int
+        self, repository: str, reviews: List[dict], days: int
     ) -> Dict:
         """
         Analyze patterns for a specific repository.
@@ -255,18 +263,18 @@ class PatternDetector:
         logger.info(
             "repository_analysis_started",
             repository=repository,
-            review_count=len(reviews)
+            review_count=len(reviews),
         )
 
         # Aggregate statistics
         total_prs = len(reviews)
-        total_issues = sum(r.get('issue_count', 0) for r in reviews)
+        total_issues = sum(r.get("issue_count", 0) for r in reviews)
 
         # Count issues by severity
-        critical_issues = sum(r.get('critical_count', 0) for r in reviews)
-        high_issues = sum(r.get('high_count', 0) for r in reviews)
-        medium_issues = sum(r.get('medium_count', 0) for r in reviews)
-        low_issues = sum(r.get('low_count', 0) for r in reviews)
+        critical_issues = sum(r.get("critical_count", 0) for r in reviews)
+        high_issues = sum(r.get("high_count", 0) for r in reviews)
+        medium_issues = sum(r.get("medium_count", 0) for r in reviews)
+        low_issues = sum(r.get("low_count", 0) for r in reviews)
 
         # Analyze issue types
         issue_type_freq, recurring_issue_types = self._analyze_issue_types(reviews)
@@ -278,49 +286,45 @@ class PatternDetector:
         trend_data = self._analyze_trends(reviews, days)
 
         # Calculate recommendation distribution
-        recommendation_dist = Counter(r.get('recommendation') for r in reviews)
+        recommendation_dist = Counter(r.get("recommendation") for r in reviews)
 
         # Calculate average metrics
         avg_issues_per_pr = total_issues / total_prs if total_prs > 0 else 0
-        avg_cost = sum(r.get('estimated_cost', 0) for r in reviews) / total_prs if total_prs > 0 else 0
+        avg_cost = (
+            sum(r.get("estimated_cost", 0) for r in reviews) / total_prs
+            if total_prs > 0
+            else 0
+        )
 
         pattern_report = {
             "repository": repository,
             "analysis_period_days": days,
             "analysis_date": datetime.now(timezone.utc).isoformat(),
-
             # Summary statistics
             "total_prs_reviewed": total_prs,
             "total_issues_found": total_issues,
             "avg_issues_per_pr": round(avg_issues_per_pr, 2),
-
             # Severity distribution
             "severity_distribution": {
                 "critical": critical_issues,
                 "high": high_issues,
                 "medium": medium_issues,
-                "low": low_issues
+                "low": low_issues,
             },
-
             # Recommendation distribution
             "recommendation_distribution": dict(recommendation_dist),
-
             # Recurring issues (appear in >30% of PRs)
             "recurring_issues": recurring_issue_types,
-
             # Most common issue types (top 10)
             "top_issue_types": dict(issue_type_freq.most_common(10)),
-
             # Problematic files (top 10 files with most issues)
             "problematic_files": problematic_files[:10],
-
             # Trend analysis
             "trends": trend_data,
-
             # Cost metrics
-            "total_cost": round(sum(r.get('estimated_cost', 0) for r in reviews), 2),
+            "total_cost": round(sum(r.get("estimated_cost", 0) for r in reviews), 2),
             "avg_cost_per_review": round(avg_cost, 4),
-            "total_tokens": sum(r.get('tokens_used', 0) for r in reviews)
+            "total_tokens": sum(r.get("tokens_used", 0) for r in reviews),
         }
 
         logger.info(
@@ -328,7 +332,7 @@ class PatternDetector:
             repository=repository,
             total_issues=total_issues,
             recurring_issues=len(recurring_issue_types),
-            problematic_files=len(problematic_files)
+            problematic_files=len(problematic_files),
         )
 
         return pattern_report
@@ -347,19 +351,38 @@ class PatternDetector:
         issue_type_pr_count = defaultdict(set)  # Track which PRs have each issue type
 
         for review in reviews:
-            pr_id = review.get('pr_id')
-            issue_types_json = review.get('issue_types', '[]')
+            pr_id = review.get("pr_id")
+            issue_types_json = review.get("issue_types", "[]")
+
+            # Validate JSON field is a string before parsing
+            if not isinstance(issue_types_json, str):
+                logger.warning(
+                    "invalid_issue_types_type",
+                    review_id=review.get("RowKey"),
+                    actual_type=type(issue_types_json).__name__,
+                )
+                continue
 
             try:
                 issue_types = json.loads(issue_types_json)
+                # Validate result is a list
+                if not isinstance(issue_types, list):
+                    logger.warning(
+                        "issue_types_not_list",
+                        review_id=review.get("RowKey"),
+                        actual_type=type(issue_types).__name__,
+                    )
+                    continue
             except json.JSONDecodeError:
                 logger.warning(
-                    "invalid_issue_types_json",
-                    review_id=review.get('RowKey')
+                    "invalid_issue_types_json", review_id=review.get("RowKey")
                 )
                 continue
 
             for issue_type in issue_types:
+                # Validate each item is a string
+                if not isinstance(issue_type, str):
+                    continue
                 issue_type_counter[issue_type] += 1
                 issue_type_pr_count[issue_type].add(pr_id)
 
@@ -371,16 +394,18 @@ class PatternDetector:
             occurrence_rate = len(pr_count) / total_prs if total_prs > 0 else 0
 
             if occurrence_rate >= PATTERN_RECURRENCE_THRESHOLD:
-                recurring_issues.append({
-                    "issue_type": issue_type,
-                    "occurrence_count": issue_type_counter[issue_type],
-                    "pr_count": len(pr_count),
-                    "occurrence_rate": round(occurrence_rate, 3),
-                    "severity": "pattern"  # Recurring pattern
-                })
+                recurring_issues.append(
+                    {
+                        "issue_type": issue_type,
+                        "occurrence_count": issue_type_counter[issue_type],
+                        "pr_count": len(pr_count),
+                        "occurrence_rate": round(occurrence_rate, 3),
+                        "severity": "pattern",  # Recurring pattern
+                    }
+                )
 
         # Sort by occurrence rate
-        recurring_issues.sort(key=lambda x: x['occurrence_rate'], reverse=True)
+        recurring_issues.sort(key=lambda x: x["occurrence_rate"], reverse=True)
 
         return issue_type_counter, recurring_issues
 
@@ -399,48 +424,69 @@ class PatternDetector:
         file_severities = defaultdict(list)
 
         for review in reviews:
-            pr_id = review.get('pr_id')
-            files_json = review.get('files_reviewed', '[]')
+            pr_id = review.get("pr_id")
+            files_json = review.get("files_reviewed", "[]")
 
-            try:
-                files = json.loads(files_json)
-            except json.JSONDecodeError:
+            # Validate JSON field is a string before parsing
+            if not isinstance(files_json, str):
                 logger.warning(
-                    "invalid_files_json",
-                    review_id=review.get('RowKey')
+                    "invalid_files_type",
+                    review_id=review.get("RowKey"),
+                    actual_type=type(files_json).__name__,
                 )
                 continue
 
+            try:
+                files = json.loads(files_json)
+                # Validate result is a list
+                if not isinstance(files, list):
+                    logger.warning(
+                        "files_not_list",
+                        review_id=review.get("RowKey"),
+                        actual_type=type(files).__name__,
+                    )
+                    continue
+            except json.JSONDecodeError:
+                logger.warning("invalid_files_json", review_id=review.get("RowKey"))
+                continue
+
             # For each file, track issues
-            issue_count = review.get('issue_count', 0)
-            critical = review.get('critical_count', 0)
-            high = review.get('high_count', 0)
+            issue_count = review.get("issue_count", 0)
+            critical = review.get("critical_count", 0)
+            high = review.get("high_count", 0)
+
+            # Filter to only valid string paths
+            valid_files = [f for f in files if isinstance(f, str)]
+            if not valid_files:
+                continue
 
             # Distribute issues across files (simple approach)
-            if files and issue_count > 0:
-                for file_path in files:
-                    file_issue_count[file_path] += issue_count // len(files)
+            if valid_files and issue_count > 0:
+                for file_path in valid_files:
+                    file_issue_count[file_path] += issue_count // len(valid_files)
                     file_pr_count[file_path].add(pr_id)
 
                     if critical > 0:
-                        file_severities[file_path].append('critical')
+                        file_severities[file_path].append("critical")
                     elif high > 0:
-                        file_severities[file_path].append('high')
+                        file_severities[file_path].append("high")
 
         # Create problematic file list
         problematic_files = []
         for file_path, issue_count in file_issue_count.items():
             if issue_count >= 3:  # At least 3 issues
-                problematic_files.append({
-                    "file_path": file_path,
-                    "total_issues": issue_count,
-                    "pr_count": len(file_pr_count[file_path]),
-                    "has_critical": 'critical' in file_severities[file_path],
-                    "has_high": 'high' in file_severities[file_path]
-                })
+                problematic_files.append(
+                    {
+                        "file_path": file_path,
+                        "total_issues": issue_count,
+                        "pr_count": len(file_pr_count[file_path]),
+                        "has_critical": "critical" in file_severities[file_path],
+                        "has_high": "high" in file_severities[file_path],
+                    }
+                )
 
         # Sort by issue count
-        problematic_files.sort(key=lambda x: x['total_issues'], reverse=True)
+        problematic_files.sort(key=lambda x: x["total_issues"], reverse=True)
 
         return problematic_files
 
@@ -459,19 +505,21 @@ class PatternDetector:
             # Not enough data for meaningful trends
             return {
                 "trend_available": False,
-                "message": "Insufficient data for trend analysis (minimum 7 days)"
+                "message": "Insufficient data for trend analysis (minimum 7 days)",
             }
 
         # Group reviews by week
-        weekly_data = defaultdict(lambda: {
-            "pr_count": 0,
-            "issue_count": 0,
-            "critical_count": 0,
-            "high_count": 0
-        })
+        weekly_data = defaultdict(
+            lambda: {
+                "pr_count": 0,
+                "issue_count": 0,
+                "critical_count": 0,
+                "high_count": 0,
+            }
+        )
 
         for review in reviews:
-            reviewed_at = review.get('reviewed_at')
+            reviewed_at = review.get("reviewed_at")
 
             # Parse datetime
             if isinstance(reviewed_at, str):
@@ -486,9 +534,9 @@ class PatternDetector:
             week_key = reviewed_at.strftime("%Y-W%W")
 
             weekly_data[week_key]["pr_count"] += 1
-            weekly_data[week_key]["issue_count"] += review.get('issue_count', 0)
-            weekly_data[week_key]["critical_count"] += review.get('critical_count', 0)
-            weekly_data[week_key]["high_count"] += review.get('high_count', 0)
+            weekly_data[week_key]["issue_count"] += review.get("issue_count", 0)
+            weekly_data[week_key]["critical_count"] += review.get("critical_count", 0)
+            weekly_data[week_key]["high_count"] += review.get("high_count", 0)
 
         # Calculate trend direction
         weeks = sorted(weekly_data.keys())
@@ -496,11 +544,19 @@ class PatternDetector:
             first_week = weekly_data[weeks[0]]
             last_week = weekly_data[weeks[-1]]
 
-            first_avg_issues = first_week["issue_count"] / max(first_week["pr_count"], 1)
+            first_avg_issues = first_week["issue_count"] / max(
+                first_week["pr_count"], 1
+            )
             last_avg_issues = last_week["issue_count"] / max(last_week["pr_count"], 1)
 
-            trend_direction = "improving" if last_avg_issues < first_avg_issues else "degrading" if last_avg_issues > first_avg_issues else "stable"
-            trend_percentage = ((last_avg_issues - first_avg_issues) / max(first_avg_issues, 0.1)) * 100
+            trend_direction = (
+                "improving"
+                if last_avg_issues < first_avg_issues
+                else "degrading" if last_avg_issues > first_avg_issues else "stable"
+            )
+            trend_percentage = (
+                (last_avg_issues - first_avg_issues) / max(first_avg_issues, 0.1)
+            ) * 100
         else:
             trend_direction = "unknown"
             trend_percentage = 0.0
@@ -513,27 +569,62 @@ class PatternDetector:
             "weekly_summary": {
                 week: {
                     "prs": data["pr_count"],
-                    "avg_issues_per_pr": round(data["issue_count"] / max(data["pr_count"], 1), 2),
+                    "avg_issues_per_pr": round(
+                        data["issue_count"] / max(data["pr_count"], 1), 2
+                    ),
                     "critical_issues": data["critical_count"],
-                    "high_issues": data["high_count"]
+                    "high_issues": data["high_count"],
                 }
                 for week, data in sorted(weekly_data.items())
-            }
+            },
         }
 
-    async def get_repository_health_score(self, repository: str, days: int = PATTERN_ANALYSIS_DAYS) -> Dict:
+    async def get_repository_health_score(
+        self, repository: str, days: int = PATTERN_ANALYSIS_DAYS
+    ) -> Dict:
         """
         Calculate health score for a repository.
 
         Args:
             repository: Repository name
-            days: Analysis period
+            days: Analysis period (1-365)
 
         Returns:
             Health score and metrics
         """
-        ensure_table_exists('reviewhistory')
-        history_table = get_table_client('reviewhistory')
+        # Validate days parameter (prevents DoS via excessive date range)
+        if not isinstance(days, int) or days < 1 or days > 365:
+            logger.warning("invalid_days_parameter", days=days, repository=repository)
+            return {
+                "repository": repository,
+                "health_score": 0,
+                "status": "error",
+                "error": f"Invalid days parameter: {days}",
+            }
+
+        # Validate repository parameter
+        if not isinstance(repository, str) or not repository or len(repository) > 1000:
+            logger.warning(
+                "invalid_repository_parameter", repository=str(repository)[:100]
+            )
+            return {
+                "repository": str(repository)[:100] if repository else "empty",
+                "health_score": 0,
+                "status": "error",
+                "error": "Invalid repository name",
+            }
+
+        if "\x00" in repository:
+            logger.warning("null_byte_in_repository", repository=repository[:100])
+            return {
+                "repository": repository[:100],
+                "health_score": 0,
+                "status": "error",
+                "error": "Invalid repository name characters",
+            }
+
+        ensure_table_exists("reviewhistory")
+        history_table = get_table_client("reviewhistory")
 
         cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
 
@@ -542,9 +633,21 @@ class PatternDetector:
             safe_repository = sanitize_odata_value(repository)
             query_filter = f"PartitionKey eq '{safe_repository}' and reviewed_at ge datetime'{cutoff_time.isoformat()}'"
 
-            # Use pagination to avoid loading all entities into memory
+            # Use pagination with safety limit (DoS protection)
             reviews = []
-            for review in query_entities_paginated(history_table, query_filter=query_filter, page_size=TABLE_STORAGE_BATCH_SIZE):
+            for review in query_entities_paginated(
+                history_table,
+                query_filter=query_filter,
+                page_size=TABLE_STORAGE_BATCH_SIZE,
+            ):
+                if len(reviews) >= MAX_PATTERN_REVIEWS:
+                    logger.warning(
+                        "health_score_reviews_truncated",
+                        repository=repository,
+                        max_reviews=MAX_PATTERN_REVIEWS,
+                        days=days,
+                    )
+                    break
                 reviews.append(review)
 
             if not reviews:
@@ -552,14 +655,14 @@ class PatternDetector:
                     "repository": repository,
                     "health_score": HEALTH_SCORE_MAX,
                     "status": "unknown",
-                    "message": "No reviews found for analysis period"
+                    "message": "No reviews found for analysis period",
                 }
 
             # Calculate health metrics
             total_prs = len(reviews)
-            total_issues = sum(r.get('issue_count', 0) for r in reviews)
-            critical_issues = sum(r.get('critical_count', 0) for r in reviews)
-            high_issues = sum(r.get('high_count', 0) for r in reviews)
+            total_issues = sum(r.get("issue_count", 0) for r in reviews)
+            critical_issues = sum(r.get("critical_count", 0) for r in reviews)
+            high_issues = sum(r.get("high_count", 0) for r in reviews)
 
             avg_issues_per_pr = total_issues / total_prs if total_prs > 0 else 0
 
@@ -614,23 +717,19 @@ class PatternDetector:
                     "avg_issues_per_pr": round(avg_issues_per_pr, 2),
                     "critical_issues": critical_issues,
                     "high_issues": high_issues,
-                    "total_issues": total_issues
+                    "total_issues": total_issues,
                 },
                 "analysis_period_days": days,
-                "analyzed_at": datetime.now(timezone.utc).isoformat()
+                "analyzed_at": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:
-            logger.exception(
-                "health_score_error",
-                repository=repository,
-                error=str(e)
-            )
+            logger.exception("health_score_error", repository=repository, error=str(e))
             return {
                 "repository": repository,
                 "health_score": 0,
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
             }
 
     async def get_global_summary(self, days: int = PATTERN_ANALYSIS_DAYS) -> Dict:
@@ -650,28 +749,30 @@ class PatternDetector:
                 "total_repositories": 0,
                 "total_prs": 0,
                 "total_issues": 0,
-                "message": "No data available for analysis period"
+                "message": "No data available for analysis period",
             }
 
         total_repos = len(patterns)
-        total_prs = sum(p.get('total_prs_reviewed', 0) for p in patterns)
-        total_issues = sum(p.get('total_issues_found', 0) for p in patterns)
-        total_cost = sum(p.get('total_cost', 0) for p in patterns)
+        total_prs = sum(p.get("total_prs_reviewed", 0) for p in patterns)
+        total_issues = sum(p.get("total_issues_found", 0) for p in patterns)
+        total_cost = sum(p.get("total_cost", 0) for p in patterns)
 
         # Find most common issues globally
         all_issue_types = Counter()
         for pattern in patterns:
-            issue_types = pattern.get('top_issue_types', {})
+            issue_types = pattern.get("top_issue_types", {})
             all_issue_types.update(issue_types)
 
         return {
             "total_repositories": total_repos,
             "total_prs": total_prs,
             "total_issues": total_issues,
-            "avg_issues_per_pr": round(total_issues / total_prs, 2) if total_prs > 0 else 0,
+            "avg_issues_per_pr": (
+                round(total_issues / total_prs, 2) if total_prs > 0 else 0
+            ),
             "total_cost": round(total_cost, 2),
             "avg_cost_per_pr": round(total_cost / total_prs, 4) if total_prs > 0 else 0,
             "top_global_issues": dict(all_issue_types.most_common(15)),
             "analysis_period_days": days,
-            "analyzed_at": datetime.now(timezone.utc).isoformat()
+            "analyzed_at": datetime.now(timezone.utc).isoformat(),
         }
