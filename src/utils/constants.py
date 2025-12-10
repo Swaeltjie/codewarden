@@ -410,6 +410,9 @@ TOKENS_PER_LINE_ESTIMATE = 6
 # Maximum lines in a single hunk (DoS protection)
 MAX_HUNK_LINES = 10_000
 
+# Maximum lines in a diff file (DoS protection for fallback parser)
+MAX_DIFF_LINES = 100_000
+
 # =============================================================================
 # REVIEW RESULT LIMITS
 # =============================================================================
