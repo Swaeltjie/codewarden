@@ -4,7 +4,7 @@ Reliability Models
 
 Data models for idempotency tracking and response caching.
 
-Version: 2.6.12 - Idempotency key excludes event_type to prevent duplicate reviews
+Version: 2.7.2 - Fixed HALF_OPEN failure handling to properly reopen circuit
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
@@ -27,6 +27,7 @@ class IdempotencyEntity(BaseModel):
     - RowKey: Request ID (PR ID + event type hash)
     - TTL: 48 hours via Table Storage lifecycle policy
     """
+
     PartitionKey: str = Field(..., max_length=100)  # Date: YYYY-MM-DD
     RowKey: str = Field(..., max_length=200)  # Request ID
     pr_id: int = Field(..., gt=0, lt=2147483647)
@@ -38,12 +39,13 @@ class IdempotencyEntity(BaseModel):
     processing_count: int = Field(default=1, ge=1, lt=1000)
     result_summary: str = Field(..., max_length=1000)  # Brief summary of review result
 
-    @field_validator('PartitionKey')
+    @field_validator("PartitionKey")
     @classmethod
     def validate_partition_key(cls, v: str) -> str:
         """Validate partition key is a valid date format."""
         import re
-        if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
+
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
             raise ValueError("PartitionKey must be in YYYY-MM-DD format")
         return v
 
@@ -53,7 +55,7 @@ class IdempotencyEntity(BaseModel):
         pr_id: int,
         repository: str,
         event_type: str,
-        source_commit_id: Optional[str] = None
+        source_commit_id: Optional[str] = None,
     ) -> str:
         """
         Generate deterministic request ID.
@@ -73,10 +75,7 @@ class IdempotencyEntity(BaseModel):
         """
         # Create stable hash of request parameters
         # v2.6.12: Exclude event_type to deduplicate across created/updated webhooks
-        parts = [
-            str(pr_id),
-            repository
-        ]
+        parts = [str(pr_id), repository]
         if source_commit_id:
             parts.append(source_commit_id)
 
@@ -93,11 +92,13 @@ class IdempotencyEntity(BaseModel):
         project: str,
         event_type: str,
         source_commit_id: Optional[str] = None,
-        result_summary: str = "pending"
+        result_summary: str = "pending",
     ) -> "IdempotencyEntity":
         """Create IdempotencyEntity from PR event data."""
         now = datetime.now(timezone.utc)
-        request_id = cls.create_request_id(pr_id, repository, event_type, source_commit_id)
+        request_id = cls.create_request_id(
+            pr_id, repository, event_type, source_commit_id
+        )
 
         return cls(
             PartitionKey=now.strftime("%Y-%m-%d"),
@@ -109,7 +110,7 @@ class IdempotencyEntity(BaseModel):
             first_processed_at=now,
             last_seen_at=now,
             processing_count=1,
-            result_summary=result_summary
+            result_summary=result_summary,
         )
 
     def to_table_entity(self) -> Dict[str, Any]:
@@ -124,7 +125,7 @@ class IdempotencyEntity(BaseModel):
             "first_processed_at": self.first_processed_at,
             "last_seen_at": self.last_seen_at,
             "processing_count": self.processing_count,
-            "result_summary": self.result_summary
+            "result_summary": self.result_summary,
         }
 
 
@@ -137,12 +138,15 @@ class CacheEntity(BaseModel):
     - RowKey: Content hash (SHA256 of diff content)
     - TTL: 7 days
     """
+
     PartitionKey: str = Field(..., max_length=500)  # Repository name
     RowKey: str = Field(..., max_length=100)  # Content hash (SHA256)
     diff_hash: str = Field(..., max_length=100)
     file_path: str = Field(..., max_length=2000)
     file_type: str = Field(..., max_length=50)
-    review_result_json: str = Field(..., max_length=1000000)  # Serialized ReviewResult (1MB limit)
+    review_result_json: str = Field(
+        ..., max_length=1000000
+    )  # Serialized ReviewResult (1MB limit)
     tokens_used: int = Field(..., ge=0, lt=10000000)
     estimated_cost: float = Field(..., ge=0, lt=10000.0)
     model_used: str = Field(..., max_length=200)
@@ -151,7 +155,7 @@ class CacheEntity(BaseModel):
     hit_count: int = Field(default=1, ge=1, lt=1000000)
     expires_at: datetime  # 7 days from creation
 
-    @field_validator('review_result_json')
+    @field_validator("review_result_json")
     @classmethod
     def validate_review_json(cls, v: str) -> str:
         """Validate that review_result_json contains valid JSON."""
@@ -190,14 +194,18 @@ class CacheEntity(BaseModel):
         tokens_used: int,
         estimated_cost: float,
         model_used: str,
-        ttl_days: int = 7
+        ttl_days: int = 7,
     ) -> "CacheEntity":
         """Create CacheEntity from review result."""
         now = datetime.now(timezone.utc)
         content_hash = cls.create_content_hash(diff_content, file_path)
 
         # Serialize review result
-        review_json = review_result.model_dump_json() if hasattr(review_result, 'model_dump_json') else json.dumps(review_result)
+        review_json = (
+            review_result.model_dump_json()
+            if hasattr(review_result, "model_dump_json")
+            else json.dumps(review_result)
+        )
 
         return cls(
             PartitionKey=repository,
@@ -212,7 +220,7 @@ class CacheEntity(BaseModel):
             created_at=now,
             last_accessed_at=now,
             hit_count=1,
-            expires_at=now + timedelta(days=ttl_days)
+            expires_at=now + timedelta(days=ttl_days),
         )
 
     def to_table_entity(self) -> Dict[str, Any]:
@@ -230,7 +238,7 @@ class CacheEntity(BaseModel):
             "created_at": self.created_at,
             "last_accessed_at": self.last_accessed_at,
             "hit_count": self.hit_count,
-            "expires_at": self.expires_at
+            "expires_at": self.expires_at,
         }
 
 
@@ -243,6 +251,7 @@ class CircuitBreakerState(BaseModel):
     - OPEN: Too many failures, requests fail fast
     - HALF_OPEN: Testing if service recovered
     """
+
     service_name: str = Field(..., max_length=200)
     state: str = Field(..., max_length=20)  # "CLOSED", "OPEN", "HALF_OPEN"
     failure_count: int = Field(default=0, ge=0, lt=10000)
@@ -251,7 +260,7 @@ class CircuitBreakerState(BaseModel):
     last_state_change: datetime
     next_retry_time: Optional[datetime] = None
 
-    @field_validator('state')
+    @field_validator("state")
     @classmethod
     def validate_state(cls, v: str) -> str:
         """Validate circuit breaker state is valid."""
@@ -281,14 +290,24 @@ class CircuitBreakerState(BaseModel):
             self.state = "CLOSED"
             self.last_state_change = datetime.now(timezone.utc)
 
-    def record_failure(self, failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD, timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS) -> None:
+    def record_failure(
+        self,
+        failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
+    ) -> None:
         """Record failed request and potentially open circuit."""
         now = datetime.now(timezone.utc)
         self.failure_count += 1
         self.last_failure_time = now
 
-        if self.failure_count >= failure_threshold and self.state == "CLOSED":
-            # Open the circuit
+        # HALF_OPEN -> OPEN: Any failure during recovery test reopens circuit
+        if self.state == "HALF_OPEN":
+            self.state = "OPEN"
+            self.last_state_change = now
+            self.next_retry_time = now + timedelta(seconds=timeout_seconds)
+            self.success_count = 0  # Reset success counter
+        # CLOSED -> OPEN: Need threshold failures to open
+        elif self.failure_count >= failure_threshold and self.state == "CLOSED":
             self.state = "OPEN"
             self.last_state_change = now
             self.next_retry_time = now + timedelta(seconds=timeout_seconds)

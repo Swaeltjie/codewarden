@@ -4,11 +4,12 @@ Circuit Breaker Pattern
 
 Prevents cascading failures when external services are down.
 
-Version: 2.6.36 - Lazy lock initialization to avoid event loop binding
+Version: 2.7.2 - Fixed race conditions in lock init, added timeout to reset(), fixed dict iteration
 """
 from typing import Callable, Any, Optional, Dict, TypeVar, ParamSpec
 from datetime import datetime, timezone, timedelta
 import asyncio
+import threading
 from functools import wraps
 
 from src.models.reliability import CircuitBreakerState
@@ -32,6 +33,7 @@ T = TypeVar("T")
 
 class CircuitBreakerError(Exception):
     """Raised when circuit breaker is open."""
+
     pass
 
 
@@ -55,7 +57,7 @@ class CircuitBreaker:
         service_name: str,
         failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
         timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
-        success_threshold: int = DEFAULT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD
+        success_threshold: int = DEFAULT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
     ):
         """
         Initialize circuit breaker.
@@ -74,7 +76,7 @@ class CircuitBreaker:
         self.state = CircuitBreakerState(
             service_name=service_name,
             state="CLOSED",
-            last_state_change=datetime.now(timezone.utc)
+            last_state_change=datetime.now(timezone.utc),
         )
 
         self._lock = asyncio.Lock()
@@ -83,7 +85,7 @@ class CircuitBreaker:
             "circuit_breaker_initialized",
             service_name=service_name,
             failure_threshold=failure_threshold,
-            timeout_seconds=timeout_seconds
+            timeout_seconds=timeout_seconds,
         )
 
     async def call(self, func: Callable, *args, **kwargs) -> Any:
@@ -112,7 +114,7 @@ class CircuitBreaker:
                             "circuit_breaker_open",
                             service_name=self.service_name,
                             failure_count=self.state.failure_count,
-                            next_retry=self.state.next_retry_time
+                            next_retry=self.state.next_retry_time,
                         )
                         raise CircuitBreakerError(
                             f"Circuit breaker OPEN for {self.service_name}. "
@@ -127,13 +129,13 @@ class CircuitBreaker:
                             self.state.last_state_change = now
                             logger.info(
                                 "circuit_breaker_half_open",
-                                service_name=self.service_name
+                                service_name=self.service_name,
                             )
         except asyncio.TimeoutError:
             logger.error(
                 "circuit_breaker_lock_timeout",
                 service_name=self.service_name,
-                timeout_seconds=LOCK_TIMEOUT_SECONDS
+                timeout_seconds=LOCK_TIMEOUT_SECONDS,
             )
             raise CircuitBreakerError(
                 f"Circuit breaker lock timeout for {self.service_name} after {LOCK_TIMEOUT_SECONDS}s"
@@ -147,17 +149,19 @@ class CircuitBreaker:
             try:
                 async with asyncio.timeout(LOCK_TIMEOUT_SECONDS):
                     async with self._lock:
-                        self.state.record_success(success_threshold=self.success_threshold)
+                        self.state.record_success(
+                            success_threshold=self.success_threshold
+                        )
                         logger.debug(
                             "circuit_breaker_success",
                             service_name=self.service_name,
                             state=self.state.state,
-                            success_count=self.state.success_count
+                            success_count=self.state.success_count,
                         )
             except asyncio.TimeoutError:
                 logger.warning(
                     "circuit_breaker_success_lock_timeout",
-                    service_name=self.service_name
+                    service_name=self.service_name,
                 )
 
             return result
@@ -169,7 +173,7 @@ class CircuitBreaker:
                     async with self._lock:
                         self.state.record_failure(
                             failure_threshold=self.failure_threshold,
-                            timeout_seconds=self.timeout_seconds
+                            timeout_seconds=self.timeout_seconds,
                         )
                         logger.warning(
                             "circuit_breaker_failure",
@@ -177,12 +181,12 @@ class CircuitBreaker:
                             state=self.state.state,
                             failure_count=self.state.failure_count,
                             error=str(e),
-                            error_type=type(e).__name__
+                            error_type=type(e).__name__,
                         )
             except asyncio.TimeoutError:
                 logger.warning(
                     "circuit_breaker_failure_lock_timeout",
-                    service_name=self.service_name
+                    service_name=self.service_name,
                 )
 
             # Re-raise the original exception
@@ -200,24 +204,40 @@ class CircuitBreaker:
             "state": self.state.state,
             "failure_count": self.state.failure_count,
             "success_count": self.state.success_count,
-            "last_failure_time": self.state.last_failure_time.isoformat() if self.state.last_failure_time else None,
+            "last_failure_time": (
+                self.state.last_failure_time.isoformat()
+                if self.state.last_failure_time
+                else None
+            ),
             "last_state_change": self.state.last_state_change.isoformat(),
-            "next_retry_time": self.state.next_retry_time.isoformat() if self.state.next_retry_time else None,
-            "is_accepting_requests": self.state.should_allow_request()
+            "next_retry_time": (
+                self.state.next_retry_time.isoformat()
+                if self.state.next_retry_time
+                else None
+            ),
+            "is_accepting_requests": self.state.should_allow_request(),
         }
 
     async def reset(self) -> None:
         """Manually reset circuit breaker to CLOSED state."""
-        async with self._lock:
-            self.state.state = "CLOSED"
-            self.state.failure_count = 0
-            self.state.success_count = 0
-            self.state.last_state_change = datetime.now(timezone.utc)
-            self.state.next_retry_time = None
+        try:
+            async with asyncio.timeout(LOCK_TIMEOUT_SECONDS):
+                async with self._lock:
+                    self.state.state = "CLOSED"
+                    self.state.failure_count = 0
+                    self.state.success_count = 0
+                    self.state.last_state_change = datetime.now(timezone.utc)
+                    self.state.next_retry_time = None
 
-            logger.info(
-                "circuit_breaker_reset",
-                service_name=self.service_name
+                    logger.info("circuit_breaker_reset", service_name=self.service_name)
+        except asyncio.TimeoutError:
+            logger.error(
+                "circuit_breaker_reset_lock_timeout",
+                service_name=self.service_name,
+                timeout_seconds=LOCK_TIMEOUT_SECONDS,
+            )
+            raise CircuitBreakerError(
+                f"Circuit breaker reset lock timeout for {self.service_name} after {LOCK_TIMEOUT_SECONDS}s"
             )
 
 
@@ -229,14 +249,19 @@ class CircuitBreakerManager:
     """
 
     _instances: Dict[str, CircuitBreaker] = {}
-    # v2.6.36: Lazy-initialized lock to avoid event loop binding at import time
+    # v2.7.2: Lazy-initialized asyncio lock to avoid event loop binding at import time
     _lock: Optional[asyncio.Lock] = None
+    # Thread-safe lock for initialization (prevents race condition in _get_lock)
+    _lock_init_lock = threading.Lock()
 
     @classmethod
     def _get_lock(cls) -> asyncio.Lock:
-        """Get or create lock (lazy initialization to avoid event loop issues)."""
+        """Get or create lock (thread-safe lazy initialization)."""
         if cls._lock is None:
-            cls._lock = asyncio.Lock()
+            with cls._lock_init_lock:
+                # Double-check inside lock to prevent race condition
+                if cls._lock is None:
+                    cls._lock = asyncio.Lock()
         return cls._lock
 
     @classmethod
@@ -245,7 +270,7 @@ class CircuitBreakerManager:
         service_name: str,
         failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
         timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
-        success_threshold: int = DEFAULT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD
+        success_threshold: int = DEFAULT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
     ) -> CircuitBreaker:
         """
         Get or create circuit breaker for service.
@@ -265,12 +290,9 @@ class CircuitBreakerManager:
                     service_name=service_name,
                     failure_threshold=failure_threshold,
                     timeout_seconds=timeout_seconds,
-                    success_threshold=success_threshold
+                    success_threshold=success_threshold,
                 )
-                logger.info(
-                    "circuit_breaker_created",
-                    service_name=service_name
-                )
+                logger.info("circuit_breaker_created", service_name=service_name)
 
             return cls._instances[service_name]
 
@@ -282,8 +304,13 @@ class CircuitBreakerManager:
         Returns:
             Dictionary mapping service name to state info
         """
+        # Get snapshot of breakers under lock to prevent dict iteration race
+        async with cls._get_lock():
+            breakers = list(cls._instances.items())
+
+        # Collect states (each breaker has its own lock protection)
         states = {}
-        for service_name, breaker in cls._instances.items():
+        for service_name, breaker in breakers:
             states[service_name] = breaker.get_state_info()
 
         return states
@@ -291,7 +318,12 @@ class CircuitBreakerManager:
     @classmethod
     async def reset_all(cls) -> None:
         """Reset all circuit breakers."""
-        for breaker in cls._instances.values():
+        # Get snapshot of breakers under lock to prevent dict iteration race
+        async with cls._get_lock():
+            breakers = list(cls._instances.values())
+
+        # Reset each breaker (each reset locks individually)
+        for breaker in breakers:
             await breaker.reset()
 
         logger.info("all_circuit_breakers_reset")
@@ -300,7 +332,7 @@ class CircuitBreakerManager:
 def with_circuit_breaker(
     service_name: str,
     failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
-    timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS
+    timeout_seconds: int = DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
 ):
     """
     Decorator to add circuit breaker protection to async functions.
@@ -319,16 +351,18 @@ def with_circuit_breaker(
     Returns:
         Decorated function
     """
+
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
         @wraps(func)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
             breaker = await CircuitBreakerManager.get_breaker(
                 service_name=service_name,
                 failure_threshold=failure_threshold,
-                timeout_seconds=timeout_seconds
+                timeout_seconds=timeout_seconds,
             )
 
             return await breaker.call(func, *args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
+
     return decorator
