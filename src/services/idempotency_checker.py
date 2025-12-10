@@ -4,7 +4,7 @@ Idempotency Checker
 
 Prevents duplicate PR review processing when webhooks are retried.
 
-Version: 2.6.5 - Use centralized constants
+Version: 2.7.2 - Added input validation and result_summary truncation
 """
 import asyncio
 from typing import Optional, Dict
@@ -14,7 +14,7 @@ from src.models.reliability import IdempotencyEntity
 from src.utils.table_storage import (
     get_table_client,
     ensure_table_exists,
-    query_entities_paginated
+    query_entities_paginated,
 )
 from src.utils.config import get_settings
 from src.utils.constants import TABLE_STORAGE_BATCH_SIZE, MAX_IDEMPOTENCY_ENTRIES
@@ -37,8 +37,27 @@ class IdempotencyChecker:
     def __init__(self) -> None:
         """Initialize idempotency checker."""
         self.settings = get_settings()
-        self.table_name: str = 'idempotency'
+        self.table_name: str = "idempotency"
         logger.info("idempotency_checker_initialized")
+
+    def _validate_string_param(
+        self, name: str, value: str, max_length: int = 500
+    ) -> None:
+        """
+        Validate string parameters to prevent injection and DoS.
+
+        Args:
+            name: Parameter name for error messages
+            value: Value to validate
+            max_length: Maximum allowed length
+
+        Raises:
+            ValueError: If validation fails
+        """
+        if not value or len(value) > max_length:
+            raise ValueError(f"Invalid {name}: empty or exceeds {max_length} chars")
+        if "\x00" in value:
+            raise ValueError(f"Invalid null byte in {name}")
 
     async def is_duplicate_request(
         self,
@@ -46,7 +65,7 @@ class IdempotencyChecker:
         repository: str,
         project: str,
         event_type: str,
-        source_commit_id: Optional[str] = None
+        source_commit_id: Optional[str] = None,
     ) -> tuple[bool, Optional[str]]:
         """
         Check if this request has already been processed.
@@ -64,6 +83,17 @@ class IdempotencyChecker:
             - previous_result_summary: Summary from previous processing (if duplicate)
         """
         try:
+            # Validate inputs to prevent injection/DoS
+            if not 0 < pr_id < 2147483647:
+                logger.warning("invalid_pr_id_in_idempotency", pr_id=pr_id)
+                return False, None
+            self._validate_string_param("repository", repository)
+            self._validate_string_param("project", project)
+            self._validate_string_param("event_type", event_type, max_length=100)
+            if source_commit_id:
+                self._validate_string_param(
+                    "source_commit_id", source_commit_id, max_length=100
+                )
             # v2.6.3: Run blocking table operations in thread pool
             await asyncio.to_thread(ensure_table_exists, self.table_name)
             table_client = get_table_client(self.table_name)
@@ -73,7 +103,7 @@ class IdempotencyChecker:
                 pr_id=pr_id,
                 repository=repository,
                 event_type=event_type,
-                source_commit_id=source_commit_id
+                source_commit_id=source_commit_id,
             )
 
             # Check if entity exists
@@ -84,7 +114,7 @@ class IdempotencyChecker:
                 entity = await asyncio.to_thread(
                     table_client.get_entity,
                     partition_key=partition_key,
-                    row_key=request_id
+                    row_key=request_id,
                 )
 
                 # Found existing request
@@ -93,20 +123,18 @@ class IdempotencyChecker:
                     pr_id=pr_id,
                     repository=repository,
                     request_id=request_id,
-                    first_processed_at=entity.get('first_processed_at'),
-                    processing_count=entity.get('processing_count', 1)
+                    first_processed_at=entity.get("first_processed_at"),
+                    processing_count=entity.get("processing_count", 1),
                 )
 
                 # Update last seen time and increment count (v2.6.3: non-blocking)
-                entity['last_seen_at'] = datetime.now(timezone.utc)
-                entity['processing_count'] = entity.get('processing_count', 1) + 1
+                entity["last_seen_at"] = datetime.now(timezone.utc)
+                entity["processing_count"] = entity.get("processing_count", 1) + 1
                 await asyncio.to_thread(
-                    table_client.update_entity,
-                    entity,
-                    mode='merge'
+                    table_client.update_entity, entity, mode="merge"
                 )
 
-                return True, entity.get('result_summary', 'unknown')
+                return True, entity.get("result_summary", "unknown")
 
             except (LookupError, KeyError) as e:
                 # Entity not found - this is a new request
@@ -114,17 +142,20 @@ class IdempotencyChecker:
                     "new_request_detected",
                     pr_id=pr_id,
                     repository=repository,
-                    request_id=request_id
+                    request_id=request_id,
                 )
                 return False, None
             except Exception as e:
                 # Check for Azure-specific not found errors
-                if "ResourceNotFound" in str(type(e).__name__) or "not found" in str(e).lower():
+                if (
+                    "ResourceNotFound" in str(type(e).__name__)
+                    or "not found" in str(e).lower()
+                ):
                     logger.debug(
                         "new_request_detected",
                         pr_id=pr_id,
                         repository=repository,
-                        request_id=request_id
+                        request_id=request_id,
                     )
                     return False, None
                 else:
@@ -133,7 +164,7 @@ class IdempotencyChecker:
                         "idempotency_check_failed",
                         pr_id=pr_id,
                         error=str(e),
-                        error_type=type(e).__name__
+                        error_type=type(e).__name__,
                     )
                     return False, None
 
@@ -145,7 +176,7 @@ class IdempotencyChecker:
                 pr_id=pr_id,
                 repository=repository,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
             return False, None
 
@@ -156,7 +187,7 @@ class IdempotencyChecker:
         project: str,
         event_type: str,
         source_commit_id: Optional[str] = None,
-        result_summary: str = "processing"
+        result_summary: str = "processing",
     ) -> None:
         """
         Record that a request is being/has been processed.
@@ -167,8 +198,13 @@ class IdempotencyChecker:
             project: Project name
             event_type: Event type
             source_commit_id: Latest commit ID (optional)
-            result_summary: Brief summary of result
+            result_summary: Brief summary of result (truncated to 1000 chars)
         """
+        # Truncate result_summary to prevent Pydantic validation errors
+        if len(result_summary) > 1000:
+            result_summary = result_summary[:997] + "..."
+            logger.debug("result_summary_truncated", pr_id=pr_id)
+
         try:
             # v2.6.3: Run blocking table operations in thread pool
             await asyncio.to_thread(ensure_table_exists, self.table_name)
@@ -181,13 +217,12 @@ class IdempotencyChecker:
                 project=project,
                 event_type=event_type,
                 source_commit_id=source_commit_id,
-                result_summary=result_summary
+                result_summary=result_summary,
             )
 
             # v2.6.3: Non-blocking upsert
             await asyncio.to_thread(
-                table_client.upsert_entity,
-                entity.to_table_entity()
+                table_client.upsert_entity, entity.to_table_entity()
             )
 
             logger.info(
@@ -195,7 +230,7 @@ class IdempotencyChecker:
                 pr_id=pr_id,
                 repository=repository,
                 request_id=entity.RowKey,
-                result_summary=result_summary
+                result_summary=result_summary,
             )
 
         except Exception as e:
@@ -205,7 +240,7 @@ class IdempotencyChecker:
                 pr_id=pr_id,
                 repository=repository,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
 
     async def update_result(
@@ -214,7 +249,7 @@ class IdempotencyChecker:
         repository: str,
         event_type: str,
         source_commit_id: Optional[str],
-        result_summary: str
+        result_summary: str,
     ) -> None:
         """
         Update the result summary for a processed request.
@@ -224,8 +259,13 @@ class IdempotencyChecker:
             repository: Repository name
             event_type: Event type
             source_commit_id: Latest commit ID (optional)
-            result_summary: Summary of review result
+            result_summary: Summary of review result (truncated to 1000 chars)
         """
+        # Truncate result_summary to prevent Pydantic validation errors
+        if len(result_summary) > 1000:
+            result_summary = result_summary[:997] + "..."
+            logger.debug("update_result_summary_truncated", pr_id=pr_id)
+
         try:
             # v2.6.3: Run blocking table operations in thread pool
             await asyncio.to_thread(ensure_table_exists, self.table_name)
@@ -235,7 +275,7 @@ class IdempotencyChecker:
                 pr_id=pr_id,
                 repository=repository,
                 event_type=event_type,
-                source_commit_id=source_commit_id
+                source_commit_id=source_commit_id,
             )
 
             partition_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -245,40 +285,30 @@ class IdempotencyChecker:
                 entity = await asyncio.to_thread(
                     table_client.get_entity,
                     partition_key=partition_key,
-                    row_key=request_id
+                    row_key=request_id,
                 )
 
                 # Update result (v2.6.3: non-blocking)
-                entity['result_summary'] = result_summary
-                entity['last_seen_at'] = datetime.now(timezone.utc)
+                entity["result_summary"] = result_summary
+                entity["last_seen_at"] = datetime.now(timezone.utc)
 
                 await asyncio.to_thread(
-                    table_client.update_entity,
-                    entity,
-                    mode='merge'
+                    table_client.update_entity, entity, mode="merge"
                 )
 
                 logger.info(
                     "idempotency_result_updated",
                     pr_id=pr_id,
                     request_id=request_id,
-                    result_summary=result_summary
+                    result_summary=result_summary,
                 )
 
             except Exception as e:
                 # Entity might not exist if record failed
-                logger.debug(
-                    "idempotency_update_skipped",
-                    pr_id=pr_id,
-                    reason=str(e)
-                )
+                logger.debug("idempotency_update_skipped", pr_id=pr_id, reason=str(e))
 
         except Exception as e:
-            logger.warning(
-                "idempotency_update_failed",
-                pr_id=pr_id,
-                error=str(e)
-            )
+            logger.warning("idempotency_update_failed", pr_id=pr_id, error=str(e))
 
     async def get_statistics(self, days: int = 7) -> Dict:
         """
@@ -297,6 +327,7 @@ class IdempotencyChecker:
 
             # Query recent entries
             from datetime import timedelta
+
             start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
             total_requests = 0
@@ -305,31 +336,35 @@ class IdempotencyChecker:
             # v2.6.3: Run blocking pagination in thread pool with safety limit
             entities = await asyncio.to_thread(
                 lambda: list(
-                    entity for i, entity in enumerate(
-                        query_entities_paginated(table_client, page_size=TABLE_STORAGE_BATCH_SIZE)
-                    ) if i < MAX_IDEMPOTENCY_ENTRIES
+                    entity
+                    for i, entity in enumerate(
+                        query_entities_paginated(
+                            table_client, page_size=TABLE_STORAGE_BATCH_SIZE
+                        )
+                    )
+                    if i < MAX_IDEMPOTENCY_ENTRIES
                 )
             )
 
             for entity in entities:
                 total_requests += 1
-                if entity.get('processing_count', 1) > 1:
+                if entity.get("processing_count", 1) > 1:
                     duplicate_requests += 1
 
-            duplicate_rate = (duplicate_requests / total_requests * 100.0) if total_requests > 0 else 0.0
+            duplicate_rate = (
+                (duplicate_requests / total_requests * 100.0)
+                if total_requests > 0
+                else 0.0
+            )
 
             return {
                 "total_requests": total_requests,
                 "unique_requests": total_requests - duplicate_requests,
                 "duplicate_requests": duplicate_requests,
                 "duplicate_rate_percent": round(duplicate_rate, 2),
-                "analysis_period_days": days
+                "analysis_period_days": days,
             }
 
         except Exception as e:
             logger.exception("idempotency_statistics_failed", error=str(e))
-            return {
-                "error": str(e),
-                "total_requests": 0,
-                "duplicate_requests": 0
-            }
+            return {"error": str(e), "total_requests": 0, "duplicate_requests": 0}
