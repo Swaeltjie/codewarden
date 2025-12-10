@@ -5,6 +5,22 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.7] - 2025-12-10
+
+### Fixed - Function App Reliability
+
+Comprehensive code review of `function_app.py` with fixes for event loop safety, error handling, and initialization.
+
+**function_app.py:**
+- CRITICAL: Fixed rate limiter event loop race condition with lazy lock initialization
+- Added error handling for settings initialization at startup
+- Added `review_result = None` initialization before try block to prevent NameError
+- Added null check for review_result after async with block
+- Added graceful degradation for rate limiter errors (continues in degraded mode)
+- Extracted CLEANUP_THRESHOLD as class constant in RateLimiter
+- Updated `_get_lock()` helper for lazy asyncio.Lock initialization
+- Updated `get_remaining()` to use `_get_lock()` for consistency
+
 ## [2.7.6] - 2025-12-10
 
 ### Fixed - Utils Security and Reliability

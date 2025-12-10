@@ -5,7 +5,7 @@ AI PR Reviewer - Main Azure Functions Entry Point
 This module defines the Azure Functions HTTP triggers and orchestrates
 the PR review workflow.
 
-Version: 2.6.34 - Lowered rate limiter cleanup threshold for memory efficiency
+Version: 2.7.7 - Fixed rate limiter event loop, improved error handling
 """
 import azure.functions as func
 import logging
@@ -35,11 +35,18 @@ from src.utils.constants import (
 )
 
 # Dry-run mode - skips posting to Azure DevOps
-DRY_RUN_MODE = os.environ.get('DRY_RUN', 'false').lower() == 'true'
+DRY_RUN_MODE = os.environ.get("DRY_RUN", "false").lower() == "true"
 
-# Initialize logging
-settings = get_settings()
-setup_logging(settings.LOG_LEVEL)
+# Initialize logging with error handling for startup failures
+try:
+    settings = get_settings()
+    setup_logging(settings.LOG_LEVEL)
+except Exception as e:
+    # Use basic logging since structured logging not yet set up
+    logging.basicConfig(level=logging.ERROR)
+    logging.error(f"Failed to initialize settings: {e}")
+    raise
+
 logger = structlog.get_logger(__name__)
 
 # Create Function App
@@ -50,52 +57,64 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
     """
     HTTP trigger for Azure DevOps Pull Request webhooks.
-    
+
     This function receives PR events from Azure DevOps, validates them,
     and triggers the AI review process.
-    
+
     Args:
         req: HTTP request from Azure DevOps webhook
-        
+
     Returns:
         HTTP response with status and review ID
     """
-    correlation_id = req.headers.get('x-correlation-id', str(datetime.now(timezone.utc).timestamp()))
-    
+    correlation_id = req.headers.get(
+        "x-correlation-id", str(datetime.now(timezone.utc).timestamp())
+    )
+
     # Bind correlation ID to logger context
     logger = structlog.get_logger(__name__).bind(correlation_id=correlation_id)
-    
+
     logger.info(
         "webhook_received",
         method=req.method,
         url=req.url,
-        headers_count=len(req.headers)
+        headers_count=len(req.headers),
     )
 
     try:
-        # Rate limiting check
+        # Rate limiting check with graceful degradation
         client_ip = _get_client_ip(req)
-        if await _rate_limiter.is_rate_limited(client_ip):
-            return func.HttpResponse(
-                json.dumps({
-                    "error": "Rate limit exceeded",
-                    "retry_after": DEFAULT_RETRY_AFTER_SECONDS,
-                    "message": "Too many requests. Please wait before retrying."
-                }),
-                status_code=429,
-                mimetype="application/json",
-                headers={"Retry-After": str(DEFAULT_RETRY_AFTER_SECONDS)}
+        try:
+            if await _rate_limiter.is_rate_limited(client_ip):
+                return func.HttpResponse(
+                    json.dumps(
+                        {
+                            "error": "Rate limit exceeded",
+                            "retry_after": DEFAULT_RETRY_AFTER_SECONDS,
+                            "message": "Too many requests. Please wait before retrying.",
+                        }
+                    ),
+                    status_code=429,
+                    mimetype="application/json",
+                    headers={"Retry-After": str(DEFAULT_RETRY_AFTER_SECONDS)},
+                )
+        except Exception as rate_limit_error:
+            # Rate limiter failed - log and continue in degraded mode
+            logger.warning(
+                "rate_limiter_error",
+                error=str(rate_limit_error),
+                error_type=type(rate_limit_error).__name__,
             )
 
         # Validate payload size (max 1MB)
-        content_length = req.headers.get('Content-Length')
+        content_length = req.headers.get("Content-Length")
 
         if content_length and int(content_length) > MAX_PAYLOAD_SIZE_BYTES:
             logger.warning("payload_too_large", size=content_length)
             return func.HttpResponse(
                 json.dumps({"error": "Payload too large (max 1MB)"}),
                 status_code=413,
-                mimetype="application/json"
+                mimetype="application/json",
             )
 
         # Parse request body with additional validation
@@ -108,7 +127,7 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse(
                     json.dumps({"error": "Payload too large (max 1MB)"}),
                     status_code=413,
-                    mimetype="application/json"
+                    mimetype="application/json",
                 )
 
             # Parse JSON with depth checking
@@ -118,9 +137,11 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             if not _validate_json_depth(body, max_depth=10):
                 logger.warning("json_too_deeply_nested")
                 return func.HttpResponse(
-                    json.dumps({"error": "JSON structure too deeply nested (max depth: 10)"}),
+                    json.dumps(
+                        {"error": "JSON structure too deeply nested (max depth: 10)"}
+                    ),
                     status_code=400,
-                    mimetype="application/json"
+                    mimetype="application/json",
                 )
 
         except ValueError as e:
@@ -128,50 +149,51 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps({"error": "Invalid JSON payload"}),
                 status_code=400,
-                mimetype="application/json"
+                mimetype="application/json",
             )
         except json.JSONDecodeError as e:
             logger.error("json_decode_failed")
             return func.HttpResponse(
                 json.dumps({"error": "Malformed JSON"}),
                 status_code=400,
-                mimetype="application/json"
+                mimetype="application/json",
             )
-        
+
         # Validate webhook secret
-        webhook_secret = req.headers.get('x-webhook-secret')
+        webhook_secret = req.headers.get("x-webhook-secret")
         if not _validate_webhook_secret(webhook_secret):
             logger.warning("invalid_webhook_secret")
             return func.HttpResponse(
                 json.dumps({"error": "Unauthorized"}),
                 status_code=401,
-                mimetype="application/json"
+                mimetype="application/json",
             )
-        
+
         # Validate event type first
-        event_type = body.get('eventType', '')
-        if event_type not in ['git.pullrequest.created', 'git.pullrequest.updated']:
+        event_type = body.get("eventType", "")
+        if event_type not in ["git.pullrequest.created", "git.pullrequest.updated"]:
             logger.info("ignored_event_type", event_type=event_type)
             return func.HttpResponse(
                 json.dumps({"message": f"Event type '{event_type}' ignored"}),
                 status_code=200,
-                mimetype="application/json"
+                mimetype="application/json",
             )
-        
+
         # Validate resource field exists
-        resource = body.get('resource')
+        resource = body.get("resource")
         if not resource:
             logger.error("webhook_missing_resource")
             return func.HttpResponse(
                 json.dumps({"error": "Missing 'resource' field in webhook payload"}),
                 status_code=400,
-                mimetype="application/json"
+                mimetype="application/json",
             )
-        
+
         # Parse PR event with proper error handling
         # Track context for error logging
         pr_id = None
         repository = None
+        review_result = None  # Initialize before try block
 
         try:
             pr_event = PREvent.from_azure_devops_webhook(body)
@@ -183,29 +205,27 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
                 pr_id=pr_event.pr_id,
                 repository=pr_event.repository_name,
                 author=pr_event.author_email,
-                dry_run=DRY_RUN_MODE
+                dry_run=DRY_RUN_MODE,
             )
         except KeyError as e:
             logger.error(
                 "webhook_parsing_failed",
                 missing_field=str(e),
-                body_keys=list(body.keys())
+                body_keys=list(body.keys()),
             )
             return func.HttpResponse(
                 json.dumps({"error": f"Invalid webhook structure: missing field {e}"}),
                 status_code=400,
-                mimetype="application/json"
+                mimetype="application/json",
             )
         except (ValueError, TypeError) as e:
             logger.error(
-                "pr_event_parse_failed",
-                error=str(e),
-                error_type=type(e).__name__
+                "pr_event_parse_failed", error=str(e), error_type=type(e).__name__
             )
             return func.HttpResponse(
                 json.dumps({"error": f"Invalid PR event format: {str(e)}"}),
                 status_code=400,
-                mimetype="application/json"
+                mimetype="application/json",
             )
 
         # Initialize handler with context manager for proper resource cleanup
@@ -218,8 +238,7 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             # Process the PR with timeout protection
             try:
                 review_result = await asyncio.wait_for(
-                    handler.handle_pr_event(pr_event),
-                    timeout=FUNCTION_TIMEOUT_SECONDS
+                    handler.handle_pr_event(pr_event), timeout=FUNCTION_TIMEOUT_SECONDS
                 )
             except asyncio.TimeoutError:
                 error_id = str(uuid.uuid4())
@@ -228,18 +247,24 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
                     error_id=error_id,
                     pr_id=pr_id,
                     repository=repository,
-                    timeout_seconds=FUNCTION_TIMEOUT_SECONDS
+                    timeout_seconds=FUNCTION_TIMEOUT_SECONDS,
                 )
                 return func.HttpResponse(
-                    json.dumps({
-                        "error": "Review timeout",
-                        "error_id": error_id,
-                        "pr_id": pr_id,
-                        "message": f"PR review exceeded {FUNCTION_TIMEOUT_SECONDS}s timeout. Try reducing PR size."
-                    }),
+                    json.dumps(
+                        {
+                            "error": "Review timeout",
+                            "error_id": error_id,
+                            "pr_id": pr_id,
+                            "message": f"PR review exceeded {FUNCTION_TIMEOUT_SECONDS}s timeout. Try reducing PR size.",
+                        }
+                    ),
                     status_code=504,
-                    mimetype="application/json"
+                    mimetype="application/json",
                 )
+
+        # Verify review_result was set (should always be true if no exception)
+        if review_result is None:
+            raise RuntimeError("Review result not set - unexpected code path")
 
         # Log token usage metrics for monitoring
         logger.info(
@@ -250,24 +275,26 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             duration_seconds=review_result.duration_seconds,
             tokens_used=review_result.tokens_used,
             estimated_cost=review_result.estimated_cost,
-            dry_run=DRY_RUN_MODE
+            dry_run=DRY_RUN_MODE,
         )
 
         # Return success response with token metrics
         return func.HttpResponse(
-            json.dumps({
-                "status": "success",
-                "review_id": review_result.review_id,
-                "pr_id": pr_event.pr_id,
-                "issues_found": len(review_result.issues),
-                "duration_seconds": review_result.duration_seconds,
-                "recommendation": review_result.recommendation,
-                "tokens_used": review_result.tokens_used,
-                "estimated_cost_usd": review_result.estimated_cost,
-                "dry_run": DRY_RUN_MODE
-            }),
+            json.dumps(
+                {
+                    "status": "success",
+                    "review_id": review_result.review_id,
+                    "pr_id": pr_event.pr_id,
+                    "issues_found": len(review_result.issues),
+                    "duration_seconds": review_result.duration_seconds,
+                    "recommendation": review_result.recommendation,
+                    "tokens_used": review_result.tokens_used,
+                    "estimated_cost_usd": review_result.estimated_cost,
+                    "dry_run": DRY_RUN_MODE,
+                }
+            ),
             status_code=200,
-            mimetype="application/json"
+            mimetype="application/json",
         )
 
     except (ConnectionError, TimeoutError) as e:
@@ -278,16 +305,18 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             error_id=error_id,
             error_type=type(e).__name__,
             pr_id=pr_id,
-            repository=repository
+            repository=repository,
         )
         return func.HttpResponse(
-            json.dumps({
-                "error": "Service temporarily unavailable",
-                "error_id": error_id,
-                "message": "Network error occurred. Please retry."
-            }),
+            json.dumps(
+                {
+                    "error": "Service temporarily unavailable",
+                    "error_id": error_id,
+                    "message": "Network error occurred. Please retry.",
+                }
+            ),
             status_code=503,
-            mimetype="application/json"
+            mimetype="application/json",
         )
 
     except (ValueError, TypeError, KeyError) as e:
@@ -299,16 +328,18 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             error_type=type(e).__name__,
             error=str(e),
             pr_id=pr_id,
-            repository=repository
+            repository=repository,
         )
         return func.HttpResponse(
-            json.dumps({
-                "error": "Invalid request data",
-                "error_id": error_id,
-                "message": "Request validation failed."
-            }),
+            json.dumps(
+                {
+                    "error": "Invalid request data",
+                    "error_id": error_id,
+                    "message": "Request validation failed.",
+                }
+            ),
             status_code=400,
-            mimetype="application/json"
+            mimetype="application/json",
         )
 
     except Exception as e:
@@ -320,18 +351,20 @@ async def pr_webhook_trigger(req: func.HttpRequest) -> func.HttpResponse:
             error_id=error_id,
             error_type=type(e).__name__,
             pr_id=pr_id,
-            repository=repository
+            repository=repository,
         )
 
         # Never expose internal error details in response
         return func.HttpResponse(
-            json.dumps({
-                "error": "Internal server error",
-                "error_id": error_id,
-                "message": "An unexpected error occurred. Please contact support with the error_id."
-            }),
+            json.dumps(
+                {
+                    "error": "Internal server error",
+                    "error_id": error_id,
+                    "message": "An unexpected error occurred. Please contact support with the error_id.",
+                }
+            ),
             status_code=500,
-            mimetype="application/json"
+            mimetype="application/json",
         )
 
 
@@ -356,7 +389,7 @@ async def feedback_collector_trigger(timer: func.TimerRequest) -> None:
         "feedback_collection_started",
         past_due=timer.past_due,
         schedule_status=timer.schedule_status,
-        max_retries=max_retries
+        max_retries=max_retries,
     )
 
     last_error = None
@@ -373,7 +406,7 @@ async def feedback_collector_trigger(timer: func.TimerRequest) -> None:
             logger.info(
                 "feedback_collection_completed",
                 feedback_entries=feedback_count,
-                attempt=attempt + 1
+                attempt=attempt + 1,
             )
             return  # Success - exit function
 
@@ -384,7 +417,7 @@ async def feedback_collector_trigger(timer: func.TimerRequest) -> None:
                 attempt=attempt + 1,
                 max_retries=max_retries,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
 
             # Don't retry on final attempt
@@ -396,7 +429,7 @@ async def feedback_collector_trigger(timer: func.TimerRequest) -> None:
         "feedback_collection_failed_all_retries",
         error=str(last_error),
         error_type=type(last_error).__name__,
-        attempts=max_retries + 1
+        attempts=max_retries + 1,
     )
 
 
@@ -418,9 +451,7 @@ async def pattern_detector_trigger(timer: func.TimerRequest) -> None:
     retry_delay = settings.TIMER_RETRY_DELAY_SECONDS
 
     logger.info(
-        "pattern_detection_started",
-        past_due=timer.past_due,
-        max_retries=max_retries
+        "pattern_detection_started", past_due=timer.past_due, max_retries=max_retries
     )
 
     last_error = None
@@ -438,7 +469,7 @@ async def pattern_detector_trigger(timer: func.TimerRequest) -> None:
                 "pattern_detection_completed",
                 patterns_found=len(patterns),
                 repositories_analyzed=len(patterns),
-                attempt=attempt + 1
+                attempt=attempt + 1,
             )
             return  # Success - exit function
 
@@ -449,7 +480,7 @@ async def pattern_detector_trigger(timer: func.TimerRequest) -> None:
                 attempt=attempt + 1,
                 max_retries=max_retries,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
 
             # Don't retry on final attempt
@@ -461,7 +492,7 @@ async def pattern_detector_trigger(timer: func.TimerRequest) -> None:
         "pattern_detection_failed_all_retries",
         error=str(last_error),
         error_type=type(last_error).__name__,
-        attempts=max_retries + 1
+        attempts=max_retries + 1,
     )
 
 
@@ -478,9 +509,9 @@ async def health_check(req: func.HttpRequest) -> func.HttpResponse:
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": __version__  # Use centralized version from config
+        "version": __version__,  # Use centralized version from config
     }
-    
+
     # Check dependencies
     try:
         from src.services.azure_devops import AzureDevOpsClient
@@ -493,26 +524,24 @@ async def health_check(req: func.HttpRequest) -> func.HttpResponse:
                 health_status["dependencies"] = {
                     "azure_devops": "initialized",
                     "ai_client": "initialized",
-                    "table_storage": "configured"
+                    "table_storage": "configured",
                 }
 
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["error"] = str(e)
         return func.HttpResponse(
-            json.dumps(health_status),
-            status_code=503,
-            mimetype="application/json"
+            json.dumps(health_status), status_code=503, mimetype="application/json"
         )
 
     return func.HttpResponse(
-        json.dumps(health_status),
-        status_code=200,
-        mimetype="application/json"
+        json.dumps(health_status), status_code=200, mimetype="application/json"
     )
 
 
-@app.route(route="reliability-health", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
+@app.route(
+    route="reliability-health", methods=["GET"], auth_level=func.AuthLevel.FUNCTION
+)
 async def reliability_health_check(req: func.HttpRequest) -> func.HttpResponse:
     """
     Reliability features health check endpoint.
@@ -537,30 +566,35 @@ async def reliability_health_check(req: func.HttpRequest) -> func.HttpResponse:
         handler = ReliabilityHealthHandler()
 
         # Check for specific feature request
-        feature = req.params.get('feature')
-        repository = req.params.get('repository')
+        feature = req.params.get("feature")
+        repository = req.params.get("repository")
 
-        if feature == 'circuit_breakers':
+        if feature == "circuit_breakers":
             result = await handler.get_circuit_breaker_status()
-        elif feature == 'cache':
+        elif feature == "cache":
             result = await handler.get_cache_statistics(repository=repository)
-        elif feature == 'idempotency':
+        elif feature == "idempotency":
             # Validate days parameter with bounds checking
             try:
-                days = int(req.params.get('days', IDEMPOTENCY_STATS_DEFAULT_DAYS))
-                if days < IDEMPOTENCY_STATS_MIN_DAYS or days > IDEMPOTENCY_STATS_MAX_DAYS:
+                days = int(req.params.get("days", IDEMPOTENCY_STATS_DEFAULT_DAYS))
+                if (
+                    days < IDEMPOTENCY_STATS_MIN_DAYS
+                    or days > IDEMPOTENCY_STATS_MAX_DAYS
+                ):
                     return func.HttpResponse(
-                        json.dumps({
-                            "error": f"days must be between {IDEMPOTENCY_STATS_MIN_DAYS} and {IDEMPOTENCY_STATS_MAX_DAYS}"
-                        }),
+                        json.dumps(
+                            {
+                                "error": f"days must be between {IDEMPOTENCY_STATS_MIN_DAYS} and {IDEMPOTENCY_STATS_MAX_DAYS}"
+                            }
+                        ),
                         status_code=400,
-                        mimetype="application/json"
+                        mimetype="application/json",
                     )
             except ValueError:
                 return func.HttpResponse(
                     json.dumps({"error": "days must be a valid integer"}),
                     status_code=400,
-                    mimetype="application/json"
+                    mimetype="application/json",
                 )
             result = await handler.get_idempotency_statistics(days=days)
         else:
@@ -572,7 +606,7 @@ async def reliability_health_check(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps(result, indent=2),
             status_code=status_code,
-            mimetype="application/json"
+            mimetype="application/json",
         )
 
     except Exception as e:
@@ -582,17 +616,17 @@ async def reliability_health_check(req: func.HttpRequest) -> func.HttpResponse:
             "status": "error",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "error": str(e),
-            "error_type": type(e).__name__
+            "error_type": type(e).__name__,
         }
 
         return func.HttpResponse(
-            json.dumps(error_response),
-            status_code=500,
-            mimetype="application/json"
+            json.dumps(error_response), status_code=500, mimetype="application/json"
         )
 
 
-@app.route(route="circuit-breaker-admin", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+@app.route(
+    route="circuit-breaker-admin", methods=["POST"], auth_level=func.AuthLevel.FUNCTION
+)
 async def circuit_breaker_admin(req: func.HttpRequest) -> func.HttpResponse:
     """
     Circuit breaker admin endpoint for managing circuit breaker states.
@@ -614,61 +648,66 @@ async def circuit_breaker_admin(req: func.HttpRequest) -> func.HttpResponse:
     from src.services.circuit_breaker import CircuitBreakerManager
 
     try:
-        action = req.params.get('action')
-        service = req.params.get('service')
+        action = req.params.get("action")
+        service = req.params.get("service")
 
-        if action == 'reset':
+        if action == "reset":
             if service:
                 # Reset specific service
                 breaker = await CircuitBreakerManager.get_breaker(service)
                 await breaker.reset()
                 logger.info("circuit_breaker_reset_single", service=service)
                 return func.HttpResponse(
-                    json.dumps({
-                        "status": "success",
-                        "action": "reset",
-                        "service": service,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    }),
+                    json.dumps(
+                        {
+                            "status": "success",
+                            "action": "reset",
+                            "service": service,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ),
                     status_code=200,
-                    mimetype="application/json"
+                    mimetype="application/json",
                 )
             else:
                 # Reset all circuit breakers
                 await CircuitBreakerManager.reset_all()
                 logger.info("circuit_breaker_reset_all")
                 return func.HttpResponse(
-                    json.dumps({
-                        "status": "success",
-                        "action": "reset_all",
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    }),
+                    json.dumps(
+                        {
+                            "status": "success",
+                            "action": "reset_all",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ),
                     status_code=200,
-                    mimetype="application/json"
+                    mimetype="application/json",
                 )
 
         # Default: return status of all circuit breakers
         states = await CircuitBreakerManager.get_all_states()
         return func.HttpResponse(
-            json.dumps({
-                "status": "success",
-                "circuit_breakers": states,
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }, indent=2),
+            json.dumps(
+                {
+                    "status": "success",
+                    "circuit_breakers": states,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                indent=2,
+            ),
             status_code=200,
-            mimetype="application/json"
+            mimetype="application/json",
         )
 
     except Exception as e:
         logger.exception("circuit_breaker_admin_failed", error=str(e))
         return func.HttpResponse(
-            json.dumps({
-                "status": "error",
-                "error": str(e),
-                "error_type": type(e).__name__
-            }),
+            json.dumps(
+                {"status": "error", "error": str(e), "error_type": type(e).__name__}
+            ),
             status_code=500,
-            mimetype="application/json"
+            mimetype="application/json",
         )
 
 
@@ -710,6 +749,7 @@ def _validate_webhook_secret(provided_secret: Optional[str]) -> bool:
         # whether strings match or not, preventing attackers from
         # using timing to guess the secret character-by-character
         import hmac
+
         return hmac.compare_digest(provided_secret, expected_secret)
     except Exception as e:
         logger.error("webhook_secret_validation_failed", error=str(e))
@@ -753,8 +793,7 @@ def _validate_json_depth(obj: Any, max_depth: int, current_depth: int = 0) -> bo
     # Recursive case: list - check all items
     elif isinstance(obj, list):
         return all(
-            _validate_json_depth(item, max_depth, current_depth + 1)
-            for item in obj
+            _validate_json_depth(item, max_depth, current_depth + 1) for item in obj
         )
 
     # Base case: primitive types (str, int, bool, None) have no depth
@@ -765,6 +804,7 @@ def _validate_json_depth(obj: Any, max_depth: int, current_depth: int = 0) -> bo
 # Rate Limiting
 # =============================================================================
 
+
 class RateLimiter:
     """
     Simple in-memory rate limiter for webhook endpoint.
@@ -773,10 +813,14 @@ class RateLimiter:
     Limits are per-function-instance (resets on cold start).
 
     v2.6.2: Added MAX_TRACKED_CLIENTS to prevent unbounded memory growth.
+    v2.7.7: Fixed event loop race condition with lazy lock initialization.
     """
 
     # v2.6.2: Maximum number of tracked clients to prevent memory exhaustion
     MAX_TRACKED_CLIENTS: int = 10000
+
+    # v2.7.7: Cleanup threshold for memory efficiency
+    CLEANUP_THRESHOLD: int = 1000
 
     def __init__(self, max_requests: int = 100, window_seconds: int = 60):
         """
@@ -789,8 +833,19 @@ class RateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._requests: Dict[str, List[float]] = {}
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None  # Lazy init for event loop safety
         self._last_cleanup: float = 0.0
+
+    def _get_lock(self) -> asyncio.Lock:
+        """
+        Get or create lock for current event loop.
+
+        Lazy initialization avoids event loop race conditions when
+        RateLimiter is instantiated at module level.
+        """
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def is_rate_limited(self, client_id: str) -> bool:
         """
@@ -805,12 +860,13 @@ class RateLimiter:
         now = datetime.now(timezone.utc).timestamp()
         window_start = now - self.window_seconds
 
-        async with self._lock:
-            # v2.6.34: Periodic cleanup to prevent memory growth
+        async with self._get_lock():
+            # Periodic cleanup to prevent memory growth
             # Run cleanup every minute or when client count exceeds threshold
-            # Lowered from MAX_TRACKED_CLIENTS (10000) to 1000 for better memory efficiency
-            if (len(self._requests) > 1000 or
-                    now - self._last_cleanup > 60):
+            if (
+                len(self._requests) > self.CLEANUP_THRESHOLD
+                or now - self._last_cleanup > 60
+            ):
                 self._cleanup_stale_clients(window_start)
                 self._last_cleanup = now
 
@@ -820,8 +876,7 @@ class RateLimiter:
 
             # Remove old requests outside window
             self._requests[client_id] = [
-                ts for ts in self._requests[client_id]
-                if ts > window_start
+                ts for ts in self._requests[client_id] if ts > window_start
             ]
 
             # Check if over limit
@@ -829,7 +884,7 @@ class RateLimiter:
                 logger.warning(
                     "rate_limit_exceeded",
                     client_id=client_id,
-                    requests_in_window=len(self._requests[client_id])
+                    requests_in_window=len(self._requests[client_id]),
                 )
                 return True
 
@@ -854,7 +909,7 @@ class RateLimiter:
             logger.info(
                 "rate_limiter_cleanup",
                 clients_removed=before_count - after_count,
-                clients_remaining=after_count
+                clients_remaining=after_count,
             )
 
     async def get_remaining(self, client_id: str) -> int:
@@ -867,7 +922,7 @@ class RateLimiter:
         Returns:
             Number of remaining requests in current window
         """
-        async with self._lock:
+        async with self._get_lock():
             if client_id not in self._requests:
                 return self.max_requests
             return max(0, self.max_requests - len(self._requests.get(client_id, [])))
@@ -875,8 +930,7 @@ class RateLimiter:
 
 # Global rate limiter instance
 _rate_limiter = RateLimiter(
-    max_requests=RATE_LIMIT_MAX_REQUESTS,
-    window_seconds=RATE_LIMIT_WINDOW_SECONDS
+    max_requests=RATE_LIMIT_MAX_REQUESTS, window_seconds=RATE_LIMIT_WINDOW_SECONDS
 )
 
 
@@ -894,13 +948,13 @@ def _get_client_ip(req: func.HttpRequest) -> str:
         Client IP address
     """
     # Azure Functions behind App Gateway/Load Balancer
-    forwarded_for = req.headers.get('X-Forwarded-For', '')
+    forwarded_for = req.headers.get("X-Forwarded-For", "")
     if forwarded_for:
         # Take first IP in chain (original client)
-        return forwarded_for.split(',')[0].strip()
+        return forwarded_for.split(",")[0].strip()
 
     # Direct connection (development)
-    return req.headers.get('X-Client-IP', 'unknown')
+    return req.headers.get("X-Client-IP", "unknown")
 
 
 # =============================================================================
