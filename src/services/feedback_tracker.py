@@ -5,7 +5,7 @@ Feedback Tracker
 Tracks developer feedback on AI suggestions to improve over time.
 Supports few-shot learning with accepted examples and rejection patterns.
 
-Version: 2.7.1 - Bug fixes: division by zero, OData validation, type coercion, deduplication
+Version: 2.7.2 - Added JSON size validation, type coercion for API responses
 """
 import asyncio
 import uuid
@@ -43,6 +43,7 @@ from src.utils.constants import (
     LEARNING_CONTEXT_DAYS,
     MIN_REJECTIONS_FOR_PATTERN,
     MAX_REJECTION_PATTERNS,
+    MAX_JSON_FIELD_SIZE,
 )
 from src.utils.logging import get_logger
 
@@ -183,9 +184,22 @@ class FeedbackTracker:
         """
         devops = await self._get_devops_client()
 
-        pr_id = review.get("pr_id")
+        pr_id_raw = review.get("pr_id")
         repository = review.get("repository")
         project = review.get("project")
+
+        # Type coercion for pr_id (may be string from API response)
+        try:
+            pr_id = int(pr_id_raw) if pr_id_raw else None
+            if not pr_id or pr_id <= 0 or pr_id >= 2147483647:
+                logger.warning("invalid_pr_id", pr_id_raw=pr_id_raw)
+                return 0
+        except (ValueError, TypeError):
+            logger.warning(
+                "pr_id_not_numeric",
+                pr_id_raw=str(pr_id_raw)[:50] if pr_id_raw else None,
+            )
+            return 0
 
         if not all([pr_id, repository, project]):
             logger.warning("missing_pr_metadata", review_id=review.get("RowKey"))
@@ -219,8 +233,28 @@ class FeedbackTracker:
 
             threads = await devops._get_pr_threads(project, repository_id, pr_id)
 
-            # Parse issue types from review
-            issue_types = json.loads(review.get("issue_types", "[]"))
+            # Parse issue types from review with size validation (DoS protection)
+            issue_types_str = review.get("issue_types", "[]")
+            if len(issue_types_str) > MAX_JSON_FIELD_SIZE:
+                logger.warning(
+                    "issue_types_json_too_large",
+                    size=len(issue_types_str),
+                    max_size=MAX_JSON_FIELD_SIZE,
+                    review_id=review.get("RowKey"),
+                )
+                issue_types = []
+            else:
+                try:
+                    issue_types = json.loads(issue_types_str)
+                    if not isinstance(issue_types, list):
+                        issue_types = []
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        "invalid_issue_types_json",
+                        error=str(e),
+                        review_id=review.get("RowKey"),
+                    )
+                    issue_types = []
 
             # Process each thread for feedback (with per-thread error handling)
             for thread in threads:
@@ -279,7 +313,20 @@ class FeedbackTracker:
         Returns:
             FeedbackEntity if feedback found, None otherwise
         """
-        thread_id = thread.get("id")
+        # Type coercion for thread_id (may be string/float from API response)
+        thread_id_raw = thread.get("id")
+        try:
+            thread_id = int(thread_id_raw) if thread_id_raw else 0
+            if thread_id <= 0:
+                logger.warning("invalid_thread_id", thread_id_raw=thread_id_raw)
+                return None
+        except (ValueError, TypeError):
+            logger.warning(
+                "thread_id_not_numeric",
+                thread_id_raw=str(thread_id_raw)[:50] if thread_id_raw else None,
+            )
+            return None
+
         status = thread.get("status", "unknown").lower()
 
         # Check for resolved or won't fix status
@@ -351,8 +398,11 @@ class FeedbackTracker:
         thread_context = thread.get("threadContext", {})
         file_path = thread_context.get("filePath", "unknown")
 
-        # Get author
-        author = first_comment.get("author", {}).get("displayName", "unknown")
+        # Get author and sanitize control characters
+        author_raw = first_comment.get("author", {}).get("displayName", "unknown")
+        author = (
+            author_raw.replace("\x00", "").replace("\n", " ").replace("\r", "")[:500]
+        )
 
         # Parse published date safely
         published_date_str = first_comment.get("publishedDate")

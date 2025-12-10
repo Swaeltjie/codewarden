@@ -266,6 +266,9 @@ MIN_REJECTIONS_FOR_PATTERN = 3
 # Maximum characters for enhanced learning section (prevents prompt bloat)
 MAX_LEARNING_SECTION_LENGTH = 10000
 
+# Maximum JSON field size for feedback parsing (DoS protection)
+MAX_JSON_FIELD_SIZE = 10000
+
 # =============================================================================
 # REVIEW HISTORY SETTINGS
 # =============================================================================
