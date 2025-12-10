@@ -5,7 +5,7 @@ Prompt Factory for AI Code Reviews
 Generates specialized prompts for different file types and review strategies.
 Supports few-shot learning with accepted examples and rejection patterns.
 
-Version: 2.7.1 - Bug fixes: severity escaping, prompt size limits
+Version: 2.7.5 - Security: sanitize diff output, file_type, fix consistency
 """
 from typing import List, Dict, Optional, Set, Union
 import re
@@ -22,8 +22,22 @@ from src.utils.constants import (
     MAX_BEST_PRACTICES_IN_PROMPT,
     MAX_TOTAL_EXAMPLES_IN_PROMPT,
     MAX_REJECTION_PATTERNS,
+    FEEDBACK_MIN_SAMPLES,
+    MAX_LEARNING_SECTION_LENGTH,
 )
 from src.utils.logging import get_logger
+
+# Pre-compiled regex patterns for performance (avoid ReDoS)
+_NEWLINE_PATTERN = re.compile(r"\n{3,}")
+_INJECTION_PATTERNS = [
+    re.compile(r"(?i)ignore\s+(?:all\s+)?(?:previous|above|prior)\s+instructions?"),
+    re.compile(r"(?i)disregard\s+(?:all\s+)?(?:previous|above|prior)"),
+    re.compile(r"(?i)new\s+instructions?:"),
+    re.compile(r"(?i)system\s*:"),
+    re.compile(r"(?i)assistant\s*:"),
+    re.compile(r"(?i)user\s*:"),
+    re.compile(r"---+"),
+]
 
 logger = get_logger(__name__)
 
@@ -68,28 +82,15 @@ class PromptFactory:
         if not text:
             return ""
 
-        # Truncate to max length
+        # Truncate to max length first (prevents ReDoS on long inputs)
         text = text[:max_length]
 
-        # Remove common prompt injection patterns
-        # - Remove markdown headers that could create new sections
-        # - Remove instruction-like patterns
-        # - Remove potential delimiter confusion
-        dangerous_patterns = [
-            r"(?i)ignore\s+(all\s+)?(previous|above|prior)\s+instructions?",
-            r"(?i)disregard\s+(all\s+)?(previous|above|prior)",
-            r"(?i)new\s+instructions?:",
-            r"(?i)system\s*:",
-            r"(?i)assistant\s*:",
-            r"(?i)user\s*:",
-            r"---+",  # Markdown horizontal rules that could break sections
-        ]
-
-        for pattern in dangerous_patterns:
-            text = re.sub(pattern, "[REDACTED]", text)
+        # Remove common prompt injection patterns using pre-compiled regex
+        for pattern in _INJECTION_PATTERNS:
+            text = pattern.sub("[REDACTED]", text)
 
         # Replace multiple newlines with single newline to prevent section breaks
-        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = _NEWLINE_PATTERN.sub("\n\n", text)
 
         # Log if sanitization modified the input (potential attack attempt)
         if "[REDACTED]" in text:
@@ -216,16 +217,19 @@ class PromptFactory:
 
         # Add each file's changes
         for file in files:
-            # Sanitize file path
+            # Sanitize file path and file type
             safe_path = self._sanitize_user_input(file.path, self.MAX_PATH_LENGTH)
+            safe_file_type = self._sanitize_user_input(str(file.file_type), 100)
             prompt_parts.append(f"## File: {safe_path}")
-            prompt_parts.append(f"**Type:** {file.file_type}")
+            prompt_parts.append(f"**Type:** {safe_file_type}")
             prompt_parts.append("")
 
-            # Add formatted diff sections
+            # Add formatted diff sections (sanitize diff output)
             for section in file.changed_sections:
                 formatted = self.diff_parser.format_section_for_review(section)
-                prompt_parts.append(formatted)
+                # Sanitize diff output to prevent injection via code content
+                safe_formatted = self._sanitize_user_input(formatted, 10000)
+                prompt_parts.append(safe_formatted)
                 prompt_parts.append("")
 
         # Add review instructions
@@ -253,15 +257,16 @@ class PromptFactory:
         # Similar to single-pass but for a subset
         if not files:
             logger.warning("build_group_prompt_called_with_empty_files")
-            return ""
+            raise ValueError("files list cannot be empty")
 
         # Validate learning context
         safe_learning_context = self._validate_learning_context(learning_context)
 
-        file_type = files[0].file_type
+        # Sanitize file type
+        safe_file_type = self._sanitize_user_input(str(files[0].file_type), 100)
 
         prompt_parts = []
-        prompt_parts.append(f"# Review: {file_type} Files")
+        prompt_parts.append(f"# Review: {safe_file_type} Files")
         prompt_parts.append("")
 
         for file in files:
@@ -270,7 +275,9 @@ class PromptFactory:
             prompt_parts.append(f"## {safe_path}")
             for section in file.changed_sections:
                 formatted = self.diff_parser.format_section_for_review(section)
-                prompt_parts.append(formatted)
+                # Sanitize diff output
+                safe_formatted = self._sanitize_user_input(formatted, 10000)
+                prompt_parts.append(safe_formatted)
                 prompt_parts.append("")
 
         prompt_parts.append("---")
@@ -295,16 +302,28 @@ class PromptFactory:
 
         prompt_parts = []
 
-        # Sanitize file path
+        # Sanitize file path and file type
         safe_path = self._sanitize_user_input(file.path, self.MAX_PATH_LENGTH)
+        safe_file_type = self._sanitize_user_input(str(file.file_type), 100)
         prompt_parts.append(f"# Review: {safe_path}")
-        prompt_parts.append(f"**Type:** {file.file_type}")
+        prompt_parts.append(f"**Type:** {safe_file_type}")
         prompt_parts.append("")
 
         for section in file.changed_sections:
             formatted = self.diff_parser.format_section_for_review(section)
-            prompt_parts.append(formatted)
+            # Sanitize diff output
+            safe_formatted = self._sanitize_user_input(formatted, 10000)
+            prompt_parts.append(safe_formatted)
             prompt_parts.append("")
+
+        # Add learning context if available
+        if safe_learning_context:
+            learning_section = self._build_learning_context_section(
+                safe_learning_context
+            )
+            if learning_section:
+                prompt_parts.append(learning_section)
+                prompt_parts.append("")
 
         prompt_parts.append("---")
         prompt_parts.append(self._get_review_instructions([file]))
@@ -324,7 +343,7 @@ class PromptFactory:
         """
         if not results:
             logger.warning("build_cross_file_prompt_called_with_empty_results")
-            return ""
+            raise ValueError("results list cannot be empty")
 
         prompt_parts = []
 
@@ -336,6 +355,13 @@ class PromptFactory:
         prompt_parts.append("")
 
         for result in results:
+            # Validate result has pr_id attribute
+            if not hasattr(result, "pr_id") or result.pr_id is None:
+                logger.warning(
+                    "result_missing_pr_id", result_type=type(result).__name__
+                )
+                continue
+
             # Sanitize PR ID (convert to string and sanitize)
             safe_pr_id = self._sanitize_user_input(str(result.pr_id), 50)
             prompt_parts.append(f"## PR {safe_pr_id}")
@@ -486,9 +512,6 @@ Respond with valid JSON only:
 
         total_feedback = learning_context.get("total_feedback_count", 0)
 
-        # Issue #18: Use constant instead of magic number
-        from src.utils.constants import FEEDBACK_MIN_SAMPLES
-
         # Require minimum feedback for statistical significance
         if total_feedback < FEEDBACK_MIN_SAMPLES:
             logger.debug(
@@ -506,9 +529,9 @@ Respond with valid JSON only:
 
         # Add positive feedback context
         if positive_rate > 0:
-            # Sanitize the rate display (already validated to be 0-1)
+            # Use int conversion to avoid floating-point precision errors
             section_parts.append(
-                f"Team acceptance rate: {positive_rate:.0%} "
+                f"Team acceptance rate: {int(positive_rate * 100)}% "
                 f"(based on {total_feedback} feedback entries)"
             )
             section_parts.append("")
@@ -613,9 +636,11 @@ Respond with valid JSON only:
             safe_file_path = safe_file_path.replace("`", "'")
             safe_code_snippet = safe_code_snippet.replace("`", "'")
             safe_suggestion = safe_suggestion.replace("`", "'")
-            # Issue #14: Also escape severity for consistency
+            # Convert severity to string first (may be enum), then escape
             safe_severity = (
-                example.severity.replace("`", "'") if example.severity else "medium"
+                str(example.severity).replace("`", "'")
+                if example.severity
+                else "medium"
             )
 
             section_parts.append(
@@ -624,7 +649,11 @@ Respond with valid JSON only:
             section_parts.append(f"File: `{safe_file_path}`")
 
             if safe_code_snippet and safe_code_snippet != "[Code from unknown]":
-                section_parts.append(f"Code: `{safe_code_snippet}`")
+                # Use triple backticks for code (safer against breakout)
+                section_parts.append("Code:")
+                section_parts.append("```")
+                section_parts.append(safe_code_snippet.replace("```", "'''"))
+                section_parts.append("```")
 
             section_parts.append(f"Suggestion: {safe_suggestion}")
             section_parts.append("")
@@ -721,7 +750,9 @@ Respond with valid JSON only:
             context_dict = self._validate_learning_context(learning_context)
             examples = {}
             rejection_patterns = []
-            has_sufficient = context_dict.get("total_feedback_count", 0) >= 5
+            has_sufficient = (
+                context_dict.get("total_feedback_count", 0) >= FEEDBACK_MIN_SAMPLES
+            )
 
         if not has_sufficient:
             return None
@@ -749,9 +780,6 @@ Respond with valid JSON only:
 
         if not section_parts:
             return None
-
-        # Issue #5: Apply prompt size limit to prevent bloat
-        from src.utils.constants import MAX_LEARNING_SECTION_LENGTH
 
         result = "\n".join(section_parts)
         if len(result) > MAX_LEARNING_SECTION_LENGTH:

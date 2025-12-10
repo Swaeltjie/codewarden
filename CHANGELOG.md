@@ -5,6 +5,24 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.5] - 2025-12-10
+
+### Fixed - Prompts Security and Reliability
+
+Comprehensive code review of `src/prompts/factory.py` with fixes for prompt injection, ReDoS, and consistency.
+
+**factory.py:**
+- Pre-compiled regex patterns at module level to prevent ReDoS attacks
+- Added sanitization for diff parser output (user code content could inject prompts)
+- Added sanitization for file_type field (enum could contain injection patterns)
+- Fixed percentage formatting to avoid floating-point precision errors (use int conversion)
+- Fixed severity escaping in few-shot examples (convert to string before escaping)
+- Fixed code snippet display to use triple backticks (safer against markdown breakout)
+- Made error handling consistent: all empty input cases now raise ValueError
+- Added pr_id attribute validation in build_cross_file_prompt
+- Added learning context to build_file_prompt for consistency with other methods
+- Moved FEEDBACK_MIN_SAMPLES and MAX_LEARNING_SECTION_LENGTH imports to module level
+
 ## [2.7.4] - 2025-12-10
 
 ### Fixed - Models Reliability and Security
