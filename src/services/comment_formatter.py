@@ -4,11 +4,13 @@ Comment Formatter for Azure DevOps
 
 Formats review results as markdown comments for Azure DevOps PRs.
 
-Version: 2.7.2 - Fixed markdown injection vulnerability and type annotations
+Version: 2.8.0 - Added rich inline formatting with action buttons
 """
+from urllib.parse import urlencode
 from src.models.review_result import ReviewResult, ReviewIssue, IssueSeverity
-from typing import Dict, List
+from typing import Dict, List, Optional
 
+from src.utils.constants import MAX_DOCUMENTATION_LINKS_PER_ISSUE
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -261,3 +263,175 @@ class CommentFormatter:
                 )
 
         return counts
+
+    def format_rich_inline_issue(
+        self, issue: ReviewIssue, action_base_url: Optional[str] = None
+    ) -> str:
+        """
+        Format a single issue as a rich inline comment with all enhancements.
+
+        Args:
+            issue: ReviewIssue object with all fields populated
+            action_base_url: Base URL for action links (optional)
+
+        Returns:
+            Rich markdown formatted inline comment
+        """
+        icon = self.severity_icons.get(issue.severity, self.DEFAULT_ICON)
+        severity_text = (
+            issue.severity.value
+            if hasattr(issue.severity, "value")
+            else str(issue.severity)
+        ).upper()
+
+        lines = []
+
+        # Header with severity and issue type
+        lines.append(
+            f"## {icon} {severity_text}: {self._escape_markdown(issue.issue_type)}"
+        )
+        lines.append("")
+
+        # File and Rule metadata
+        line_info = f"L{issue.line_number}" if issue.line_number > 0 else "File-level"
+        lines.append(
+            f"**File:** `{self._escape_markdown(issue.file_path)}:{line_info}`"
+        )
+
+        if issue.rule_id:
+            lines.append(f"**Rule:** {self._escape_markdown(issue.rule_id)}")
+
+        lines.append("")
+
+        # Issue description
+        lines.append("### Issue")
+        lines.append(self._escape_markdown(issue.message))
+        lines.append("")
+
+        # Current code (if snippet available)
+        if issue.code_snippet and issue.code_snippet.strip():
+            lines.append("### Current Code")
+            safe_snippet = issue.code_snippet.replace("```", "\\`\\`\\`")
+            lines.append("```")
+            lines.append(safe_snippet)
+            lines.append("```")
+            lines.append("")
+
+        # Impact section (new in v2.8.0)
+        if issue.impact and issue.impact.strip():
+            lines.append("### Impact")
+            impact_lines = issue.impact.strip().split("\n")
+            # Limit to first 10 impact points to prevent comment bloat
+            max_impact_lines = 10
+            displayed_count = 0
+            for impact_line in impact_lines:
+                if impact_line.strip():
+                    if displayed_count < max_impact_lines:
+                        lines.append(f"- {self._escape_markdown(impact_line.strip())}")
+                        displayed_count += 1
+            if len([l for l in impact_lines if l.strip()]) > max_impact_lines:
+                lines.append(f"- ... and more")
+            lines.append("")
+
+        # Suggested fix section
+        if issue.suggested_fix:
+            lines.append("### Suggested Fix")
+            safe_after = issue.suggested_fix.after.replace("```", "\\`\\`\\`")
+            lines.append("```")
+            lines.append(safe_after)
+            lines.append("```")
+            lines.append("")
+
+            if issue.suggested_fix.explanation:
+                lines.append(
+                    f"*{self._escape_markdown(issue.suggested_fix.explanation)}*"
+                )
+                lines.append("")
+        elif issue.suggestion and issue.suggestion.strip():
+            lines.append("### Suggestion")
+            lines.append(self._escape_markdown(issue.suggestion))
+            lines.append("")
+
+        # Documentation links (new in v2.8.0)
+        if issue.documentation_links:
+            lines.append("### Learn More")
+            for doc_link in issue.documentation_links[
+                :MAX_DOCUMENTATION_LINKS_PER_ISSUE
+            ]:
+                if self._is_safe_url(doc_link.url):
+                    safe_title = self._escape_markdown(doc_link.title)
+                    # Escape parentheses in URL to prevent markdown injection
+                    safe_url = doc_link.url.replace(")", "%29").replace("(", "%28")
+                    lines.append(f"- [{safe_title}]({safe_url})")
+            lines.append("")
+
+        # Action buttons (markdown links)
+        if action_base_url:
+            lines.append(self._format_action_buttons(issue, action_base_url))
+
+        return "\n".join(lines)
+
+    def _format_action_buttons(self, issue: ReviewIssue, action_base_url: str) -> str:
+        """
+        Format action buttons as markdown links.
+
+        Args:
+            issue: ReviewIssue with action_context
+            action_base_url: Base URL for action endpoints (must be validated)
+
+        Returns:
+            Markdown string with action links, or empty string if URL is unsafe
+        """
+        # CRITICAL: Validate action_base_url before using it
+        if not self._is_safe_url(action_base_url):
+            logger.warning(
+                "unsafe_action_base_url",
+                url=action_base_url[:100] if action_base_url else "",
+            )
+            return ""
+
+        buttons = []
+
+        # Sanitize and truncate all parameter values
+        params = {
+            "review_id": (
+                issue.action_context.review_id if issue.action_context else ""
+            )[:100],
+            "file_path": issue.file_path[:2000],
+            "line_number": str(issue.line_number),
+            "rule_id": (issue.rule_id or "")[:50],
+            "issue_type": issue.issue_type[:200],
+        }
+
+        # Apply Fix button (only if suggested_fix exists)
+        if issue.suggested_fix:
+            fix_url = f"{action_base_url}/apply-fix?{urlencode(params)}"
+            buttons.append(f"[Apply Fix]({fix_url})")
+
+        # Ask Question button
+        question_url = f"{action_base_url}/question?{urlencode(params)}"
+        buttons.append(f"[Ask Question]({question_url})")
+
+        # Mute Rule button
+        mute_url = f"{action_base_url}/mute-rule?{urlencode(params)}"
+        buttons.append(f"[Mute Rule]({mute_url})")
+
+        # False Positive button
+        fp_url = f"{action_base_url}/false-positive?{urlencode(params)}"
+        buttons.append(f"[False Positive]({fp_url})")
+
+        # Return as clickable links (not inside code blocks)
+        return " | ".join(buttons)
+
+    def _is_safe_url(self, url: str) -> bool:
+        """Validate URL is safe for inclusion in comments."""
+        if not url:
+            return False
+        if not url.startswith(("https://", "http://")):
+            return False
+        url_lower = url.lower()
+        if "javascript:" in url_lower or "data:" in url_lower:
+            return False
+        if "\x00" in url:
+            return False
+        return True

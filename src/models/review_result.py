@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.7.4 - Fixed overflow comparison, added metadata type validation, INFO in summary
+Version: 2.8.0 - Added rule_id, impact, documentation_links for interactive comments
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -54,6 +54,57 @@ class SuggestedFix(BaseModel):
     )
 
 
+class DocumentationLink(BaseModel):
+    """External documentation reference for an issue."""
+
+    title: str = Field(..., max_length=200, description="Link text")
+    url: str = Field(..., max_length=2000, description="Documentation URL")
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        """Validate URL format and allowed protocols."""
+        if not v.startswith(("https://", "http://")):
+            raise ValueError("URL must use http or https protocol")
+        if "javascript:" in v.lower() or "data:" in v.lower():
+            raise ValueError("Invalid URL protocol")
+        if "\x00" in v:
+            raise ValueError("URL contains null bytes")
+        return v
+
+
+class ActionContext(BaseModel):
+    """Context needed to generate action URLs."""
+
+    review_id: str = Field(..., max_length=100, description="Review ID for tracking")
+    thread_id: Optional[int] = Field(None, description="Azure DevOps thread ID")
+    pr_url: Optional[str] = Field(None, max_length=2000, description="PR URL")
+    repository_id: Optional[str] = Field(None, max_length=100)
+    project_id: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("review_id", "repository_id", "project_id")
+    @classmethod
+    def validate_no_null_bytes(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure no null bytes in string fields."""
+        if v and "\x00" in v:
+            raise ValueError("Field contains null bytes")
+        return v
+
+    @field_validator("pr_url")
+    @classmethod
+    def validate_pr_url(cls, v: Optional[str]) -> Optional[str]:
+        """Validate PR URL if provided."""
+        if v is None:
+            return v
+        if "\x00" in v:
+            raise ValueError("PR URL contains null bytes")
+        if not v.startswith(("https://", "http://")):
+            raise ValueError("PR URL must use http or https protocol")
+        if "javascript:" in v.lower() or "data:" in v.lower():
+            raise ValueError("Invalid PR URL protocol")
+        return v
+
+
 class ReviewIssue(BaseModel):
     """
     Represents a single issue found during code review.
@@ -84,6 +135,26 @@ class ReviewIssue(BaseModel):
     agent_type: Optional[str] = Field(
         None, max_length=50, description="Agent that found this issue (v2.7.0)"
     )
+    rule_id: Optional[str] = Field(
+        None,
+        max_length=50,
+        pattern=r"^[A-Z]{2,6}-\d{3,4}$",
+        description="Rule ID (e.g., SEC-001, PERF-042)",
+    )
+    impact: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Explanation of consequences if not fixed",
+    )
+    documentation_links: List[DocumentationLink] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Learn more links to external documentation",
+    )
+    action_context: Optional[ActionContext] = Field(
+        None,
+        description="Context for generating action URLs",
+    )
 
     @field_validator("message", "suggestion", "issue_type")
     @classmethod
@@ -104,6 +175,17 @@ class ReviewIssue(BaseModel):
         while "\n\n\n" in v:
             v = v.replace("\n\n\n", "\n\n")
 
+        return v.strip()
+
+    @field_validator("impact")
+    @classmethod
+    def sanitize_impact(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize impact field to prevent markdown injection."""
+        if v is None:
+            return v
+        v = v.replace("\x00", "")
+        while "\n\n\n" in v:
+            v = v.replace("\n\n\n", "\n\n")
         return v.strip()
 
     @field_validator("file_path")
@@ -316,6 +398,27 @@ class ReviewResult(BaseModel):
             # Ensure line_number exists
             if "line_number" not in issue_data:
                 issue_data["line_number"] = 0
+
+            # Parse documentation_links (new in v2.8.0)
+            if "documentation_links" in issue_data:
+                links_data = issue_data["documentation_links"]
+                if isinstance(links_data, list):
+                    parsed_links = []
+                    for link in links_data[:5]:  # Max 5 links
+                        if isinstance(link, dict) and "title" in link and "url" in link:
+                            try:
+                                parsed_links.append(DocumentationLink(**link))
+                            except (ValueError, TypeError) as e:
+                                # Log validation failures for security monitoring
+                                _logger.warning(
+                                    "invalid_documentation_link",
+                                    link_title=str(link.get("title", ""))[:50],
+                                    link_url=str(link.get("url", ""))[:100],
+                                    error=str(e),
+                                )
+                    issue_data["documentation_links"] = parsed_links
+                else:
+                    issue_data["documentation_links"] = []
 
             try:
                 issues.append(ReviewIssue(**issue_data))

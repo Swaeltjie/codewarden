@@ -12,7 +12,7 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.7.3 - Fixed resource cleanup, added semaphore to group/cross-file reviews, timeouts
+Version: 2.8.0 - Integrated rich inline comment formatting
 """
 import asyncio
 import os
@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from collections import Counter
 
 from src.models.pr_event import PREvent, FileChange, FileType
-from src.models.review_result import ReviewResult, ReviewIssue
+from src.models.review_result import ReviewResult, ReviewIssue, ActionContext
 from src.models.feedback import ReviewHistoryEntity
 from src.services.azure_devops import AzureDevOpsClient
 from src.services.diff_parser import DiffParser
@@ -34,6 +34,7 @@ from src.services.response_cache import ResponseCache
 from src.services.file_type_registry import FileTypeRegistry, FileCategory
 from src.prompts.factory import PromptFactory
 from src.utils.config import get_settings
+from src.utils.constants import CODEWARDEN_ACTIONS_BASE_URL_SETTING
 from src.utils.table_storage import get_table_client, ensure_table_exists
 from src.utils.logging import get_logger
 
@@ -698,6 +699,19 @@ class PRWebhookHandler:
 
         formatter = CommentFormatter()
 
+        # Get action base URL from settings (optional)
+        action_base_url = os.environ.get(CODEWARDEN_ACTIONS_BASE_URL_SETTING)
+
+        # Validate action_base_url if provided
+        if action_base_url:
+            if not action_base_url.startswith("https://"):
+                logger.warning(
+                    "invalid_action_base_url_from_env",
+                    url=action_base_url[:100],
+                    reason="must_use_https",
+                )
+                action_base_url = None  # Disable action buttons if URL is unsafe
+
         # Main summary comment
         summary_markdown = formatter.format_summary(review_result)
 
@@ -712,7 +726,19 @@ class PRWebhookHandler:
         # Individual inline comments for high/critical issues
         for issue in review_result.issues:
             if issue.severity in ["critical", "high"]:
-                inline_comment = formatter.format_inline_issue(issue)
+                # Populate action context for the issue
+                if action_base_url:
+                    issue.action_context = ActionContext(
+                        review_id=review_result.review_id,
+                        pr_url=f"https://dev.azure.com/{self.settings.AZURE_DEVOPS_ORG}/{pr_event.project_name}/_git/{pr_event.repository_name}/pullrequest/{pr_event.pr_id}",
+                        repository_id=pr_event.repository_id,
+                        project_id=pr_event.project_id,
+                    )
+
+                # Use rich formatting for inline comments
+                inline_comment = formatter.format_rich_inline_issue(
+                    issue, action_base_url=action_base_url
+                )
 
                 await self.devops_client.post_inline_comment(
                     project_id=pr_event.project_id,

@@ -4,7 +4,7 @@ Configuration Management
 
 Handles application settings and Azure Key Vault integration for secrets.
 
-Version: 2.7.7 - Updated for function_app.py reliability fixes
+Version: 2.8.0 - Interactive review comments feature
 """
 import atexit
 import re
@@ -25,7 +25,7 @@ from src.utils.constants import (
 from src.utils.logging import get_logger
 
 # Application version - single source of truth
-__version__ = "2.7.7"
+__version__ = "2.8.0"
 
 logger = get_logger(__name__)
 

@@ -5,6 +5,61 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2025-12-15
+
+### Added - Interactive Review Comments
+
+Rich, interactive PR review comments with actionable elements and comprehensive issue documentation.
+
+**New Features:**
+- **Rule IDs**: Issues now include structured rule identifiers (e.g., SEC-001, PERF-042) for tracking and suppression
+- **Impact Descriptions**: Each issue explains the consequences if not fixed, formatted as bullet points
+- **Documentation Links**: Up to 5 external documentation URLs per issue with title and validated URLs
+- **Action Buttons**: Interactive markdown links for common actions:
+  - `[Apply Fix]` - Create PR suggestion with recommended fix (only shown when suggested_fix exists)
+  - `[Ask Question]` - Start discussion about the issue
+  - `[Mute Rule]` - Suppress rule for file/repository
+  - `[False Positive]` - Report incorrect finding
+- **Rich Inline Comments**: Enhanced formatting with file/line metadata, code snippets, and impact sections
+
+**New Models (review_result.py):**
+- `DocumentationLink`: Validates external documentation URLs with security checks
+- `ActionContext`: Stores context for generating action button URLs
+- New `ReviewIssue` fields: `rule_id`, `impact`, `documentation_links`, `action_context`
+
+**New Constants (constants.py):**
+- `MAX_DOCUMENTATION_LINKS_PER_ISSUE = 5`
+- `MAX_IMPACT_LENGTH = 2000`
+- `MAX_RULE_ID_LENGTH = 50`
+- `TRUSTED_DOCUMENTATION_DOMAINS` - List of trusted documentation domains
+- `CODEWARDEN_ACTIONS_BASE_URL_SETTING` - Environment variable for action endpoints
+
+**Updated Prompt Format (factory.py):**
+- AI now returns `rule_id` with PREFIX-NNN format (SEC, PERF, MAINT, RELI, DOC)
+- AI returns `impact` as bullet-pointed consequences
+- AI returns `documentation_links` array with title/url pairs
+
+**Security Hardening:**
+- URL validation for action base URL (must use HTTPS)
+- URL injection prevention in action buttons with parameter validation
+- Markdown injection prevention in documentation link URLs (parentheses escaping)
+- Null byte validation in ActionContext fields
+- PR URL protocol validation
+- Impact line limiting (max 10) to prevent comment bloat/DoS
+- Logging of invalid documentation links for security monitoring
+
+**Configuration:**
+- Set `CODEWARDEN_ACTIONS_BASE_URL` environment variable to enable action buttons
+- Action buttons only appear when the environment variable is set and valid (HTTPS)
+
+**Files Modified:**
+- `src/models/review_result.py` - New models and fields
+- `src/services/comment_formatter.py` - Rich inline formatting with action buttons
+- `src/utils/constants.py` - Interactive comments constants
+- `src/prompts/factory.py` - Updated AI response format
+- `src/handlers/pr_webhook.py` - Integration of rich formatting
+- `src/utils/config.py` - Version update
+
 ## [2.7.7] - 2025-12-10
 
 ### Fixed - Function App Reliability

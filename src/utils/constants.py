@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.7.6 - Fixed TTL consistency, added timeout constants
+Version: 2.8.0 - Added interactive comments constants
 """
 
 # =============================================================================
@@ -452,3 +452,33 @@ MAX_IDEMPOTENCY_ENTRIES = 10_000
 
 # Maximum reviews to process in pattern detection query
 MAX_PATTERN_REVIEWS = 10_000
+
+# =============================================================================
+# INTERACTIVE COMMENTS SETTINGS (v2.8.0)
+# =============================================================================
+
+# Maximum documentation links per issue
+MAX_DOCUMENTATION_LINKS_PER_ISSUE = 5
+
+# Maximum impact description length
+MAX_IMPACT_LENGTH = 2000
+
+# Maximum rule ID length
+MAX_RULE_ID_LENGTH = 50
+
+# Trusted documentation domains for Learn More links
+TRUSTED_DOCUMENTATION_DOMAINS = [
+    "docs.microsoft.com",
+    "learn.microsoft.com",
+    "owasp.org",
+    "cheatsheetseries.owasp.org",
+    "github.com",
+    "registry.terraform.io",
+    "kubernetes.io",
+    "docker.com",
+    "aws.amazon.com",
+    "cloud.google.com",
+]
+
+# Environment variable for CodeWarden action endpoints base URL
+CODEWARDEN_ACTIONS_BASE_URL_SETTING = "CODEWARDEN_ACTIONS_BASE_URL"

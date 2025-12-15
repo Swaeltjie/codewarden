@@ -5,7 +5,7 @@ Prompt Factory for AI Code Reviews
 Generates specialized prompts for different file types and review strategies.
 Supports few-shot learning with accepted examples and rejection patterns.
 
-Version: 2.7.5 - Security: sanitize diff output, file_type, fix consistency
+Version: 2.8.0 - Updated response format for rule_id, impact, documentation_links
 """
 from typing import List, Dict, Optional, Set, Union
 import re
@@ -456,15 +456,22 @@ Respond with valid JSON only:
       "severity": "critical|high|medium|low|info",
       "file_path": "/path/to/file.tf",
       "line_number": 10,
-      "issue_type": "PublicEndpoint",
+      "issue_type": "SQLInjection",
+      "rule_id": "SEC-001",
       "message": "Clear description of the issue",
+      "impact": "Bullet points explaining consequences:\\n- Data breach risk\\n- Potential for unauthorized access",
       "suggestion": "How to fix it",
+      "code_snippet": "The problematic code",
       "suggested_fix": {
         "description": "Brief description of the fix",
         "before": "code_that_has_the_issue",
         "after": "fixed_code_snippet",
         "explanation": "Why this fix works"
-      }
+      },
+      "documentation_links": [
+        {"title": "OWASP SQL Injection Guide", "url": "https://owasp.org/sql-injection"},
+        {"title": "Secure Coding Practices", "url": "https://docs.microsoft.com/secure-coding"}
+      ]
     }
   ],
   "recommendation": "approve|request_changes|comment",
@@ -476,6 +483,14 @@ Respond with valid JSON only:
 - severity must be: critical, high, medium, low, or info
 - recommendation must be: approve, request_changes, or comment
 - line_number should be 0 if file-level issue
+- **rule_id**: Use format PREFIX-NNN (e.g., SEC-001, PERF-042, MAINT-003)
+  - SEC: Security issues
+  - PERF: Performance issues
+  - MAINT: Maintainability
+  - RELI: Reliability
+  - DOC: Documentation
+- **impact**: Explain consequences as bullet points (what could happen if not fixed)
+- **documentation_links**: Include 1-3 relevant documentation URLs from trusted sources
 - **Always include suggested_fix for critical and high severity issues**
 - suggested_fix.before should show the problematic code
 - suggested_fix.after should show the corrected code
