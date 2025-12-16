@@ -14,7 +14,7 @@ Reliability:
 - Circuit breaker protection
 - Connection pool tuning
 
-Version: 2.7.2 - Fixed error handling in get_pull_request_files and _get_file_content
+Version: 2.8.1 - Added null byte validation to _get_file_content
 """
 import aiohttp
 import asyncio
@@ -33,6 +33,7 @@ from src.utils.config import get_secret_manager, get_settings
 from src.services.circuit_breaker import CircuitBreakerManager, CircuitBreakerError
 from src.utils.constants import (
     AZURE_DEVOPS_TIMEOUT,
+    AZURE_DEVOPS_LINE_END_OFFSET,
     DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
     DEFAULT_CIRCUIT_BREAKER_TIMEOUT_SECONDS,
     DEFAULT_RETRY_AFTER_SECONDS,
@@ -565,7 +566,16 @@ class AzureDevOpsClient:
 
         Returns:
             File content as string, or None if file doesn't exist
+
+        Raises:
+            ValueError: If file_path or version_ref contains null bytes
         """
+        # Validate inputs for null bytes to prevent injection attacks
+        if "\x00" in file_path:
+            raise ValueError("File path contains null bytes")
+        if "\x00" in version_ref:
+            raise ValueError("Version ref contains null bytes")
+
         # v2.6.22: Use versionDescriptor.versionType=branch for branch names, commit for SHAs
         # Branch names: main, feature/xyz (no refs/heads/ prefix)
         # Commit SHAs: 40-char hex strings
@@ -1082,7 +1092,10 @@ class AzureDevOpsClient:
             "threadContext": {
                 "filePath": file_path,
                 "rightFileStart": {"line": line_number, "offset": 1},
-                "rightFileEnd": {"line": line_number, "offset": 999},  # End of line
+                "rightFileEnd": {
+                    "line": line_number,
+                    "offset": AZURE_DEVOPS_LINE_END_OFFSET,
+                },
             },
             "properties": {
                 "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {

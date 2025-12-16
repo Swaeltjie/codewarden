@@ -5,6 +5,37 @@ All notable changes to CodeWarden will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] - 2025-12-16
+
+### Fixed - Code Review Security and Reliability Improvements
+
+Comprehensive code review fixes addressing race conditions, input validation, DoS protection, and type safety.
+
+**Security Fixes:**
+- **HTTPS-only DocumentationLink URLs**: Changed URL validator to only allow HTTPS URLs, blocking HTTP, file://, ftp://, and other dangerous schemes (review_result.py)
+- **Null byte validation**: Added null byte checks to `_get_file_content` to prevent injection attacks (azure_devops.py)
+- **Simplified path traversal protection**: Refactored to reject any path containing ".." early, before processing (pr_webhook.py)
+
+**Reliability Fixes:**
+- **Race condition fix**: Fixed RateLimiter cleanup using explicit deletion instead of dictionary comprehension to prevent race conditions (function_app.py)
+- **Query limits**: Added `MAX_FEEDBACK_ENTRIES = 10,000` constant and applied limits to all FeedbackTracker queries to prevent memory exhaustion (feedback_tracker.py, constants.py)
+- **Health score bounds**: Added `max(0, ...)` protection to prevent health scores going negative (reliability_health.py)
+- **Type validation**: Added explicit type checking for `tokens_used` and `estimated_cost` in `aggregate_results` (review_result.py)
+
+**Code Quality:**
+- **Magic number removal**: Added `AZURE_DEVOPS_LINE_END_OFFSET = 999` constant with documentation explaining its purpose (constants.py, azure_devops.py)
+- **Removed unused import**: Removed unused `pathlib.Path` import after simplifying path validation (pr_webhook.py)
+
+**Files Modified:**
+- `function_app.py` - RateLimiter race condition fix
+- `src/services/azure_devops.py` - Null byte validation, magic number constant
+- `src/services/feedback_tracker.py` - Query result limits
+- `src/handlers/reliability_health.py` - Health score bounds checking
+- `src/handlers/pr_webhook.py` - Simplified path traversal logic
+- `src/models/review_result.py` - HTTPS-only URLs, type validation
+- `src/utils/constants.py` - New constants
+- `src/utils/config.py` - Version bump
+
 ## [2.8.0] - 2025-12-15
 
 ### Added - Interactive Review Comments

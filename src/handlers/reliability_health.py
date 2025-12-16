@@ -7,7 +7,7 @@ Provides health and metrics endpoints for monitoring reliability features:
 - Response cache statistics
 - Idempotency statistics
 
-Version: 2.7.3 - Fixed health score logic, sanitized errors, added bool check for days
+Version: 2.8.1 - Added health score underflow protection
 """
 import re
 from datetime import datetime, timezone
@@ -151,10 +151,10 @@ class ReliabilityHealthHandler:
         )
 
         if cb_open_count > 0:
-            health_score -= 40  # Critical: services unavailable
+            health_score = max(0, health_score - 40)  # Critical: services unavailable
             cb_status = "degraded"
         elif cb_half_open_count > 0:
-            health_score -= 20  # Warning: services recovering
+            health_score = max(0, health_score - 20)  # Warning: services recovering
             cb_status = "recovering"
         else:
             cb_status = "healthy"
@@ -162,7 +162,7 @@ class ReliabilityHealthHandler:
         # Cache health
         cache_efficiency = cache_stats.get("cache_efficiency_percent", 0)
         if cache_efficiency < HEALTH_CHECK_CACHE_EFFICIENCY_LOW:
-            health_score -= 10  # Low cache efficiency
+            health_score = max(0, health_score - 10)  # Low cache efficiency
             cache_status = "low_efficiency"
         elif cache_efficiency < HEALTH_CHECK_CACHE_EFFICIENCY_MODERATE:
             cache_status = "moderate_efficiency"
@@ -172,7 +172,9 @@ class ReliabilityHealthHandler:
         # Idempotency health
         duplicate_rate = idempotency_stats.get("duplicate_rate_percent", 0)
         if duplicate_rate > HEALTH_CHECK_DUPLICATE_RATE_HIGH:
-            health_score -= 15  # High duplicate rate indicates issues
+            health_score = max(
+                0, health_score - 15
+            )  # High duplicate rate indicates issues
             idempotency_status = "high_duplicates"
         elif duplicate_rate > HEALTH_CHECK_DUPLICATE_RATE_MODERATE:
             idempotency_status = "moderate_duplicates"

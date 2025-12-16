@@ -4,7 +4,7 @@ Pydantic Models for Review Results
 
 Data models for AI review results, issues, and recommendations.
 
-Version: 2.8.0 - Added rule_id, impact, documentation_links for interactive comments
+Version: 2.8.1 - Added type validation in aggregate_results
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
@@ -63,13 +63,18 @@ class DocumentationLink(BaseModel):
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: str) -> str:
-        """Validate URL format and allowed protocols."""
-        if not v.startswith(("https://", "http://")):
-            raise ValueError("URL must use http or https protocol")
-        if "javascript:" in v.lower() or "data:" in v.lower():
-            raise ValueError("Invalid URL protocol")
+        """Validate URL format and ensure HTTPS only for security."""
         if "\x00" in v:
             raise ValueError("URL contains null bytes")
+        # Only allow HTTPS URLs for security (prevents MITM, mixed content issues)
+        if not v.startswith("https://"):
+            raise ValueError("Only HTTPS URLs are allowed for documentation links")
+        # Block dangerous URL schemes that could be embedded
+        dangerous_schemes = ["javascript:", "data:", "file:", "ftp:", "vbscript:"]
+        lower_url = v.lower()
+        for scheme in dangerous_schemes:
+            if scheme in lower_url:
+                raise ValueError(f"URL contains forbidden scheme: {scheme}")
         return v
 
 
@@ -548,9 +553,11 @@ class ReviewResult(BaseModel):
                     continue
 
                 # Safely set default values for missing attributes
-                # Use getattr with defaults to handle immutable objects
-                tokens_used = getattr(result, "tokens_used", 0) or 0
-                estimated_cost = getattr(result, "estimated_cost", 0.0) or 0.0
+                # Use getattr with defaults and type validation
+                tokens_raw = getattr(result, "tokens_used", 0) or 0
+                tokens_used = tokens_raw if isinstance(tokens_raw, int) else 0
+                cost_raw = getattr(result, "estimated_cost", 0.0) or 0.0
+                estimated_cost = cost_raw if isinstance(cost_raw, (int, float)) else 0.0
 
                 all_issues.extend(result.issues)
 

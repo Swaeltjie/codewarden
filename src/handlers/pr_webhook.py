@@ -12,11 +12,10 @@ Orchestrates the entire PR review workflow:
 7. Cache review responses
 8. Post results back to Azure DevOps
 
-Version: 2.8.0 - Integrated rich inline comment formatting
+Version: 2.8.1 - Simplified path traversal protection
 """
 import asyncio
 import os
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 from collections import Counter
@@ -434,8 +433,13 @@ class PRWebhookHandler:
         if not file_path or not isinstance(file_path, str):
             return False
 
-        # Check for null bytes
+        # Check for null bytes - security requirement
         if "\x00" in file_path:
+            return False
+
+        # CRITICAL: Reject any path containing ".." BEFORE any processing
+        # This is the simplest and safest approach to prevent path traversal
+        if ".." in file_path:
             return False
 
         # Check for absolute paths (should be relative)
@@ -447,43 +451,13 @@ class PRWebhookHandler:
         if os.path.isabs(path_to_check):
             return False
 
-        # Check for suspicious patterns BEFORE normalization
-        # This prevents bypassing checks with encoded paths
-        suspicious_patterns = [
-            "../",
-            "..\\",
-            "/etc/",
-            "/proc/",
-            "c:\\",
-            "\\windows\\",
-        ]
-
+        # Check for sensitive system paths (case-insensitive)
         path_lower = file_path.lower()
-        if any(pattern in path_lower for pattern in suspicious_patterns):
-            return False
-
-        # Normalize the path and check for traversal
-        try:
-            normalized = os.path.normpath(file_path)
-
-            # Check for path traversal patterns
-            if ".." in Path(normalized).parts:
-                return False
-
-            # Check if normalized path is absolute (after stripping leading /)
-            # Note: We already handled Azure DevOps root-relative paths at line 418
-            # by stripping leading '/'. The normalized path should not be absolute.
-            # Use lstrip to handle the case where normpath preserves leading slashes
-            normalized_stripped = normalized.lstrip("/\\")
-            if os.path.isabs(normalized_stripped):
-                return False
-
-            # Additional check: ensure normalized path doesn't escape current directory
-            # by checking that it doesn't start with parent directory references
-            if normalized.startswith(".."):
-                return False
-
-        except (ValueError, OSError):
+        sensitive_prefixes = ["/etc/", "/proc/", "c:\\", "\\windows\\"]
+        if any(
+            path_lower.startswith(prefix) or f"/{prefix}" in path_lower
+            for prefix in sensitive_prefixes
+        ):
             return False
 
         return True

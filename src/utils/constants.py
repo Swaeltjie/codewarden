@@ -5,7 +5,7 @@ Application Constants
 Centralized constants to avoid magic numbers throughout the codebase.
 All magic numbers and configuration values should be defined here.
 
-Version: 2.8.0 - Added interactive comments constants
+Version: 2.8.1 - Added MAX_FEEDBACK_ENTRIES query limit
 """
 
 # =============================================================================
@@ -50,6 +50,16 @@ AI_CLIENT_TIMEOUT = 180
 # Timeout for AI API request completion (includes response generation)
 # Large prompts (14K+ tokens) and advanced models need extended timeout
 AI_REQUEST_TIMEOUT = 180
+
+# =============================================================================
+# AZURE DEVOPS API SETTINGS
+# =============================================================================
+
+# End-of-line offset for inline comments in Azure DevOps thread context
+# Using a large value (999) to ensure the comment covers the entire line
+# regardless of actual line length, as Azure DevOps API doesn't provide
+# a "rest of line" semantic
+AZURE_DEVOPS_LINE_END_OFFSET = 999
 
 # =============================================================================
 # HTTP CONNECTION POOL SETTINGS
@@ -452,6 +462,9 @@ MAX_IDEMPOTENCY_ENTRIES = 10_000
 
 # Maximum reviews to process in pattern detection query
 MAX_PATTERN_REVIEWS = 10_000
+
+# Maximum feedback entries to process in queries (prevents memory exhaustion)
+MAX_FEEDBACK_ENTRIES = 10_000
 
 # =============================================================================
 # INTERACTIVE COMMENTS SETTINGS (v2.8.0)

@@ -5,7 +5,7 @@ AI PR Reviewer - Main Azure Functions Entry Point
 This module defines the Azure Functions HTTP triggers and orchestrates
 the PR review workflow.
 
-Version: 2.7.7 - Fixed rate limiter event loop, improved error handling
+Version: 2.8.1 - Fixed race condition in RateLimiter cleanup
 """
 import azure.functions as func
 import logging
@@ -896,20 +896,21 @@ class RateLimiter:
         """
         Remove clients with no recent requests to prevent memory growth.
 
-        v2.6.2: Added to prevent unbounded dictionary growth.
+        Uses explicit deletion instead of dict comprehension to avoid
+        race conditions from dictionary reassignment.
         """
-        before_count = len(self._requests)
-        self._requests = {
-            client_id: timestamps
+        stale_clients = [
+            client_id
             for client_id, timestamps in self._requests.items()
-            if any(ts > window_start for ts in timestamps)
-        }
-        after_count = len(self._requests)
-        if before_count != after_count:
+            if not any(ts > window_start for ts in timestamps)
+        ]
+        for client_id in stale_clients:
+            del self._requests[client_id]
+        if stale_clients:
             logger.info(
                 "rate_limiter_cleanup",
-                clients_removed=before_count - after_count,
-                clients_remaining=after_count,
+                clients_removed=len(stale_clients),
+                clients_remaining=len(self._requests),
             )
 
     async def get_remaining(self, client_id: str) -> int:

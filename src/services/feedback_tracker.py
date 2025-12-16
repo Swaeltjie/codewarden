@@ -5,7 +5,7 @@ Feedback Tracker
 Tracks developer feedback on AI suggestions to improve over time.
 Supports few-shot learning with accepted examples and rejection patterns.
 
-Version: 2.7.2 - Added JSON size validation, type coercion for API responses
+Version: 2.8.1 - Added query limits to prevent memory exhaustion
 """
 import asyncio
 import uuid
@@ -44,6 +44,7 @@ from src.utils.constants import (
     MIN_REJECTIONS_FOR_PATTERN,
     MAX_REJECTION_PATTERNS,
     MAX_JSON_FIELD_SIZE,
+    MAX_FEEDBACK_ENTRIES,
 )
 from src.utils.logging import get_logger
 
@@ -125,13 +126,18 @@ class FeedbackTracker:
             query_filter = f"reviewed_at ge datetime'{cutoff_time.isoformat()}'"
 
             # v2.6.3: Use pagination with non-blocking thread pool
+            # Limit results to prevent memory exhaustion (DoS protection)
             recent_reviews = await asyncio.to_thread(
                 lambda: list(
-                    query_entities_paginated(
-                        history_table,
-                        query_filter=query_filter,
-                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    entity
+                    for i, entity in enumerate(
+                        query_entities_paginated(
+                            history_table,
+                            query_filter=query_filter,
+                            page_size=TABLE_STORAGE_BATCH_SIZE,
+                        )
                     )
+                    if i < MAX_FEEDBACK_ENTRIES
                 )
             )
 
@@ -478,13 +484,18 @@ class FeedbackTracker:
             query_filter = f"PartitionKey eq '{safe_repository}'"
 
             # v2.6.3: Use pagination with non-blocking thread pool
+            # Limit results to prevent memory exhaustion (DoS protection)
             feedback_entries = await asyncio.to_thread(
                 lambda: list(
-                    query_entities_paginated(
-                        table_client,
-                        query_filter=query_filter,
-                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    entity
+                    for i, entity in enumerate(
+                        query_entities_paginated(
+                            table_client,
+                            query_filter=query_filter,
+                            page_size=TABLE_STORAGE_BATCH_SIZE,
+                        )
                     )
+                    if i < MAX_FEEDBACK_ENTRIES
                 )
             )
 
@@ -613,13 +624,18 @@ class FeedbackTracker:
             )
 
             # v2.6.3: Use pagination with non-blocking thread pool
+            # Limit results to prevent memory exhaustion (DoS protection)
             feedback_entries = await asyncio.to_thread(
                 lambda: list(
-                    query_entities_paginated(
-                        table_client,
-                        query_filter=query_filter,
-                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    entity
+                    for i, entity in enumerate(
+                        query_entities_paginated(
+                            table_client,
+                            query_filter=query_filter,
+                            page_size=TABLE_STORAGE_BATCH_SIZE,
+                        )
                     )
+                    if i < MAX_FEEDBACK_ENTRIES
                 )
             )
 
@@ -924,13 +940,18 @@ class FeedbackTracker:
                 f"feedback_received_at ge datetime'{safe_cutoff}'"
             )
 
+            # Limit results to prevent memory exhaustion (DoS protection)
             feedback_entries = await asyncio.to_thread(
                 lambda: list(
-                    query_entities_paginated(
-                        table_client,
-                        query_filter=query_filter,
-                        page_size=TABLE_STORAGE_BATCH_SIZE,
+                    entity
+                    for i, entity in enumerate(
+                        query_entities_paginated(
+                            table_client,
+                            query_filter=query_filter,
+                            page_size=TABLE_STORAGE_BATCH_SIZE,
+                        )
                     )
+                    if i < MAX_FEEDBACK_ENTRIES
                 )
             )
 
